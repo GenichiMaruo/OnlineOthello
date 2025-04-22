@@ -3,8 +3,8 @@
 # コンテナ名
 CONTAINER_NAME="networkA"
 
-# ホスト側のマウントディレクトリ（必要に応じてパスを調整）
-HOST_DIR="/Users/maruogenichi/grad_school/networkA"
+# ホスト側のマウントディレクトリ（スクリプトのあるフォルダを自動取得）
+HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Dockerイメージ名
 IMAGE_NAME="ubuntu_net:24.04"
@@ -18,5 +18,8 @@ fi
 # コンテナ起動
 docker run -itd --name $CONTAINER_NAME \
   -p 10000:10000 \
-  -v "$HOST_DIR":/root/networkA \
+  -v "$HOST_DIR":/root/OnlineOthello \
   $IMAGE_NAME /bin/bash
+
+# コンテナ内のバッシュに入る
+docker exec -it $CONTAINER_NAME /bin/bash -c "cd /root/OnlineOthello && exec /bin/bash"
