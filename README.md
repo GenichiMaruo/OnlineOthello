@@ -13,32 +13,34 @@
 
 3. 本リポジトリのルートにあるシェルスクリプト、または PowerShell スクリプトを実行して環境を構築します。
 
-### Mac / Linux の場合:
+### Mac / Linux の場合
+
 ```bash
 ./run_networkA.sh
 ```
-### Windows (PowerShell) の場合:
+
+### Windows (PowerShell) の場合
+
 ```bash
 .\run_networkA.ps1
 ```
 
 ## 🚀 起動方法
+
 セットアップスクリプトを実行すると、以下が自動的に行われます：
 
-必要な Docker イメージの構築
-
-Node.js / npm のインストール
-
-`npm install` による依存関係のインストール
-
-C言語アプリケーションのコンパイル
+- 必要な Docker イメージの構築
+- Node.js / npm のインストール
+- `npm install` による依存関係のインストール
+- C言語アプリケーションのコンパイル
 
 実行ファイル：
-クライアントアプリ：`client_app`
 
-サーバーアプリ：`server_app`
+- クライアントアプリ：`client_app`
+- サーバーアプリ：`server_app`
 
 どちらも `/root/OnlineOthello/` に配置されています。
+
 ```bash
 # コンテナ内で
 ./client_app
@@ -47,6 +49,7 @@ C言語アプリケーションのコンパイル
 ```
 
 ## 🔁 再コンパイルしたいとき
+
 コンテナ内で次のスクリプトを実行することで、アプリの再コンパイルが可能です。
 
 ```bash
@@ -54,6 +57,7 @@ C言語アプリケーションのコンパイル
 ```
 
 ## 📁 ディレクトリ構成（抜粋）
+
 ```bash
 OnlineOthello/
 ├── client/
@@ -69,6 +73,6 @@ OnlineOthello/
 ```
 
 ## 🛠️ 前提
-Docker Desktop がインストールされていること
 
-```run_networkA.sh``` または ```run_networkA.ps1``` が実行可能であること
+- Docker Desktop がインストールされていること
+- ```run_networkA.sh``` または ```run_networkA.ps1``` が実行可能であること
