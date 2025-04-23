@@ -5,35 +5,20 @@ CONTAINER_NAME="networkA"
 
 # イメージ名
 IMAGE_NAME="ubuntu_net:24.04"
-BASE_IMAGE="ubuntu:24.04"
 
 # ホスト側のマウントディレクトリ（スクリプトのあるフォルダを自動取得）
 HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Ubuntuのbase imageが存在しない場合、pull
-if ! docker image inspect $BASE_IMAGE > /dev/null 2>&1; then
-  echo "Pulling base image: $BASE_IMAGE"
-  docker pull $BASE_IMAGE
-fi
-
-# カスタムイメージが存在しない場合、作成
+# Dockerfile を使用してカスタムイメージをビルド
 if ! docker image inspect $IMAGE_NAME > /dev/null 2>&1; then
-  echo "Creating custom image: $IMAGE_NAME"
-  TMP_CONTAINER="tmp_${CONTAINER_NAME}_setup"
-
-  docker run -itd --name $TMP_CONTAINER $BASE_IMAGE /bin/bash
-
-  docker exec -it $TMP_CONTAINER bash -c "
-    apt update &&
-    apt install -y build-essential curl &&
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - &&
-    apt update &&
-    apt install -y nodejs &&
-    node -v && npm -v
-  "
-
-  docker commit $TMP_CONTAINER $IMAGE_NAME
-  docker rm -f $TMP_CONTAINER
+  echo "Building custom image: $IMAGE_NAME"
+  docker build -t $IMAGE_NAME "$HOST_DIR"
+  if [ $? -ne 0 ]; then
+    echo "Failed to build image $IMAGE_NAME"
+    exit 1
+  fi
+else
+  echo "Custom image $IMAGE_NAME already exists."
 fi
 
 # 既存の同名コンテナがある場合、削除
@@ -43,12 +28,18 @@ if [ "$(docker ps -aq -f name=^/${CONTAINER_NAME}$)" ]; then
 fi
 
 # コンテナ起動
+echo "Starting container: $CONTAINER_NAME"
 docker run -itd --name $CONTAINER_NAME \
   -p 10000:10000 \
   -v "$HOST_DIR":/root/OnlineOthello \
   $IMAGE_NAME /bin/bash
+if [ $? -ne 0 ]; then
+  echo "Failed to start container $CONTAINER_NAME"
+  exit 1
+fi
 
 # 必要な処理を一括で実行
+echo "Running initial setup in $CONTAINER_NAME..."
 docker exec -it $CONTAINER_NAME /bin/bash -c "
   cd /root/OnlineOthello/client/src/othello-front &&
   npm install -g npm@latest &&
