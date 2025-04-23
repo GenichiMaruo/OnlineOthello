@@ -31,6 +31,7 @@ if ($existingContainer) {
 Write-Host "Starting container: $CONTAINER_NAME"
 docker run -itd --name $CONTAINER_NAME `
     -p 10000:10000 `
+    -p 3000:3000 `
     -v "${HOST_DIR}:/root/OnlineOthello" `
     $IMAGE_NAME /bin/bash
 if (-not $?) { throw "Failed to start container $CONTAINER_NAME" }
