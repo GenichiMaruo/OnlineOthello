@@ -45,9 +45,10 @@ docker exec -it $CONTAINER_NAME /bin/bash -c "
   cd /root/OnlineOthello/client/src/othello-front &&
   npm install -g npm@latest &&
   npm i &&
-  cd /root/OnlineOthello &&
-  gcc client/src/client_app.c -o client_app.out &&
-  gcc server/src/server_app.c -o server_app.out &&
+  cd /root/OnlineOthello/client &&
+  make &&
+  cd /root/OnlineOthello/server &&
+  make &&
   echo 'Setup complete. Entering container shell...' &&
   exec /bin/bash
 "
