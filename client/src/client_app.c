@@ -1,99 +1,310 @@
+#include <ctype.h>  // isspace
+
 #include "client_common.h"
-#include "connection.h"
-#include "input_handler.h"
+#include "json_output.h"
+#include "network.h"
 #include "receiver.h"
-#include "ui.h"  // 終了時のメッセージ表示など
+#include "state.h"
 
-// --- グローバル変数定義 ---
-int sockfd = -1;
-pthread_t recv_thread_id = 0;  // 初期化
-pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
-ClientState current_state = STATE_DISCONNECTED;
-int my_room_id = -1;
-uint8_t my_color = 0;
-uint8_t game_board[BOARD_SIZE][BOARD_SIZE];
-volatile int keep_running = 1;  // ループ制御フラグ (初期値1)
-
-// --- プロトタイプ宣言 (このファイル内) ---
-void initialize_client();
-void cleanup();
+// --- プロトタイプ宣言 ---
+static void handle_input_commands();
+static void process_command(const char* json_command);
+static void cleanup();
 
 // --- main関数 ---
 int main() {
-    initialize_client();
+    initialize_state();
+    send_log_event(LOG_INFO, "Client starting...");
 
-    // サーバー接続
-    if (connect_to_server() < 0) {  // connection.c の関数
-        fprintf(stderr, "Failed to connect to server. Exiting.\n");
-        cleanup();  // ミューテックス破棄など
+    if (connect_to_server() < 0) {
+        // エラーは connect_to_server 内でJSON出力済み
         return 1;
     }
 
-    // 受信スレッド開始
-    if (pthread_create(&recv_thread_id, NULL, receive_handler, NULL) !=
-        0) {  // receiver.c の関数
-        perror("Failed to create receiver thread");
-        disconnect_from_server();  // connection.c
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, receive_handler, NULL) != 0) {
+        perror("Failed to create receiver thread");  // stderrに出力
+        send_error_event(
+            "Failed to start receiver thread");  // JSONでNode.jsにも通知
         cleanup();
         return 1;
     }
+    set_recv_thread_id(tid);
 
-    // メインスレッドはユーザー入力処理
-    handle_user_input();  // input_handler.c の関数
+    // メインスレッドは入力コマンド処理
+    handle_input_commands();
 
-    // ユーザー入力ループが終了したら、クリーンアップ処理
+    // 終了処理
     cleanup();
 
     return 0;
 }
 
-// --- クライアント初期化 ---
-void initialize_client() {
-    printf("Initializing client...\n");
-    // グローバル変数の初期化 (既に定義時に初期化されているものもあるが念のため)
-    sockfd = -1;
-    recv_thread_id = 0;
-    current_state = STATE_DISCONNECTED;
-    my_room_id = -1;
-    my_color = 0;
-    memset(game_board, 0, sizeof(game_board));
-    keep_running = 1;
-    // ミューテックスは初期化済み (PTHREAD_MUTEX_INITIALIZER)
-    // 必要なら pthread_mutex_init を使う
+// --- 入力コマンド処理ループ (変更なし) ---
+static void handle_input_commands() {
+    char input_buffer[512];
+
+    send_log_event(LOG_INFO, "Waiting for commands from stdin...");
+
+    while (1) {
+        ClientState current_state = get_client_state();
+        if (current_state == STATE_REMOTE_CLOSED ||
+            current_state == STATE_QUITTING) {
+            send_log_event(LOG_INFO, "Exiting command loop due to state %s",
+                           state_to_string(current_state));
+            break;
+        }
+
+        if (fgets(input_buffer, sizeof(input_buffer), stdin) == NULL) {
+            if (feof(stdin)) {
+                send_log_event(LOG_INFO, "EOF detected on stdin. Exiting...");
+            } else {
+                perror("fgets error");
+                send_error_event("Error reading command from stdin");
+            }
+            set_client_state(STATE_QUITTING);
+            break;
+        }
+
+        char* ptr = input_buffer;
+        while (isspace((unsigned char)*ptr)) ptr++;
+        if (*ptr == '\0' || *ptr == '\n') {
+            continue;
+        }
+        input_buffer[strcspn(input_buffer, "\n")] = 0;
+        process_command(input_buffer);
+    }
 }
 
-// --- 終了処理 ---
-void cleanup() {
-    printf("Starting cleanup...\n");
+// --- JSONコマンド処理 ---
+static void process_command(const char* json_command) {
+    send_log_event(LOG_DEBUG, "Received command: %s", json_command);
 
-    // keep_running フラグを確実に0にする
-    keep_running = 0;
+    char command[64] = {0};
+    char roomName[MAX_ROOM_NAME_LEN] = {0};
+    int roomId = -1;
+    int row = -1, col = -1;
+    int agree = -1;  // 0 or 1 for boolean
 
-    // サーバーから切断 (既に切断済み/処理中でも内部でチェックされる)
-    disconnect_from_server();  // connection.c
-
-    // 受信スレッドの終了を待つ
-    if (recv_thread_id != 0) {
-        printf("Waiting for receiver thread to join...\n");
-        // スレッドが recv でブロックしている場合、shutdown/close
-        // で解除されることを期待
-        int join_ret = pthread_join(recv_thread_id, NULL);
-        if (join_ret != 0) {
-            fprintf(stderr, "Error joining receiver thread: %s\n",
-                    strerror(join_ret));
-            // キャンセルを試みる (最終手段)
-            // pthread_cancel(recv_thread_id);
-        } else {
-            printf("Receiver thread joined successfully.\n");
-        }
-        recv_thread_id = 0;  // スレッドIDをクリア
+    const char* cmd_ptr = strstr(json_command, "\"command\":\"");
+    if (cmd_ptr) {
+        sscanf(cmd_ptr + strlen("\"command\":\""), "%63[^\"]", command);
     } else {
-        printf("Receiver thread was not running or already joined.\n");
+        send_error_event("Invalid command JSON: Missing 'command' field.");
+        return;
+    }
+    // Parse arguments based on command
+    if (strcmp(command, "create") == 0) {
+        const char* name_ptr = strstr(json_command, "\"roomName\":\"");
+        if (name_ptr) {
+            sscanf(name_ptr + strlen("\"roomName\":\""), "%31[^\"]", roomName);
+        } else {
+            strncpy(roomName, "DefaultRoom", sizeof(roomName) - 1);
+            roomName[sizeof(roomName) - 1] = '\0';  // Ensure null termination
+        }
+    } else if (strcmp(command, "join") == 0) {
+        const char* id_ptr = strstr(json_command, "\"roomId\":");
+        if (id_ptr) {
+            sscanf(id_ptr + strlen("\"roomId\":"), "%d", &roomId);
+        } else {
+            send_error_event("Invalid 'join' command: Missing 'roomId'.");
+            return;
+        }
+    } else if (strcmp(command, "start") == 0) {
+        const char* id_ptr = strstr(json_command, "\"roomId\":");
+        if (id_ptr) {
+            sscanf(id_ptr + strlen("\"roomId\":"), "%d", &roomId);
+        } else {
+            roomId = get_my_room_id();
+            if (roomId == -1) {
+                send_error_event("Invalid 'start' command: Not in a room.");
+                return;
+            }
+        }
+    } else if (strcmp(command, "place") == 0) {
+        const char* id_ptr = strstr(json_command, "\"roomId\":");
+        const char* row_ptr = strstr(json_command, "\"row\":");
+        const char* col_ptr = strstr(json_command, "\"col\":");
+        if (id_ptr && row_ptr && col_ptr) {
+            sscanf(id_ptr + strlen("\"roomId\":"), "%d", &roomId);
+            sscanf(row_ptr + strlen("\"row\":"), "%d", &row);
+            sscanf(col_ptr + strlen("\"col\":"), "%d", &col);
+        } else {
+            send_error_event("Invalid 'place' command: Missing fields.");
+            return;
+        }
+    } else if (strcmp(command, "rematch") == 0) {
+        const char* id_ptr = strstr(json_command, "\"roomId\":");
+        const char* agree_ptr = strstr(json_command, "\"agree\":");
+        if (id_ptr && agree_ptr) {
+            sscanf(id_ptr + strlen("\"roomId\":"), "%d", &roomId);
+            if (strstr(agree_ptr, "true")) {
+                agree = 1;
+            } else if (strstr(agree_ptr, "false")) {
+                agree = 0;
+            } else {
+                send_error_event(
+                    "Invalid 'rematch' command: 'agree' must be true or "
+                    "false.");
+                return;
+            }
+        } else {
+            send_error_event("Invalid 'rematch' command: Missing fields.");
+            return;
+        }
+    } else if (strcmp(command, "getStatus") == 0) {
+        // 特に処理なし (状態は自動的に更新される)
+        send_log_event(LOG_INFO, "Status command received.");
+        return;
+    } else {
+        send_error_event("Unknown command: %s", command);
+        return;
     }
 
-    // ミューテックスの破棄
-    printf("Destroying mutex...\n");
-    pthread_mutex_destroy(&state_mutex);
+    ClientState current_state = get_client_state();
+    int current_room_id = get_my_room_id();
+    uint8_t current_color = get_my_color();
+    Message msg;
 
-    printf("Cleanup complete.\n");
+    if (strcmp(command, "quit") == 0) {
+        set_client_state(STATE_QUITTING);
+        send_state_change_event();  // 状態変化通知
+        return;
+    }
+
+    if (strcmp(command, "getStatus") == 0) {
+        // 現在の状態を強制的にJSONで送信
+        pthread_mutex_lock(get_state_mutex());
+        send_state_change_event_unsafe();
+        if (get_my_room_id_unsafe() != -1 &&
+            get_client_state_unsafe() != STATE_QUITTING &&
+            get_client_state_unsafe() !=
+                STATE_DISCONNECTED) {          // 部屋にいる場合
+            send_board_update_event_unsafe();  // 盤面も送る
+        }
+        // 必要なら他の情報も送信
+        pthread_mutex_unlock(get_state_mutex());
+        return;  // コマンド処理終了
+    }
+
+    switch (current_state) {
+        case STATE_CONNECTED:
+            if (strcmp(command, "create") == 0) {
+                msg.type = MSG_CREATE_ROOM_REQUEST;
+                strncpy(msg.data.createRoomReq.roomName, roomName,
+                        sizeof(msg.data.createRoomReq.roomName) - 1);
+                msg.data.createRoomReq
+                    .roomName[sizeof(msg.data.createRoomReq.roomName) - 1] =
+                    '\0';
+                if (send_message_to_server(&msg)) {
+                    set_client_state(STATE_CREATING_ROOM);
+                    send_state_change_event();
+                }
+            } else if (strcmp(command, "join") == 0 && roomId != -1) {
+                msg.type = MSG_JOIN_ROOM_REQUEST;
+                msg.data.joinRoomReq.roomId = roomId;
+                if (send_message_to_server(&msg)) {
+                    set_client_state(STATE_JOINING_ROOM);
+                    send_state_change_event();
+                }
+            } else {
+                send_error_event("Invalid command '%s' in state Lobby.",
+                                 command);
+            }
+            break;
+        case STATE_WAITING_IN_ROOM:
+            if (current_color == 1 && strcmp(command, "start") == 0 &&
+                current_room_id == roomId) {
+                msg.type = MSG_START_GAME_REQUEST;
+                msg.data.startGameReq.roomId = current_room_id;
+                if (send_message_to_server(&msg)) {
+                    set_client_state(STATE_STARTING_GAME);
+                    send_state_change_event();
+                }
+            } else {
+                send_error_event("Invalid command '%s' in state WaitingInRoom.",
+                                 command);
+            }
+            break;
+        case STATE_MY_TURN:
+            if (strcmp(command, "place") == 0 && current_room_id == roomId &&
+                row != -1 && col != -1) {
+                if (row >= 0 && row < BOARD_SIZE && col >= 0 &&
+                    col < BOARD_SIZE) {
+                    msg.type = MSG_PLACE_PIECE_REQUEST;
+                    msg.data.placePieceReq.roomId = current_room_id;
+                    msg.data.placePieceReq.row = (uint8_t)row;
+                    msg.data.placePieceReq.col = (uint8_t)col;
+                    if (send_message_to_server(&msg)) {
+                        set_client_state(STATE_PLACING_PIECE);
+                        send_state_change_event();
+                    }
+                } else {
+                    send_error_event("Invalid coordinates (%d, %d).", row, col);
+                }
+            } else {
+                send_error_event("Invalid command '%s' in state MyTurn.",
+                                 command);
+            }
+            break;
+        case STATE_GAME_OVER:
+            if (strcmp(command, "rematch") == 0 && current_room_id == roomId &&
+                agree != -1) {
+                msg.type = MSG_REMATCH_REQUEST;
+                msg.data.rematchReq.roomId = current_room_id;
+                msg.data.rematchReq.agree = (uint8_t)agree;
+                if (send_message_to_server(&msg)) {
+                    set_client_state(STATE_SENDING_REMATCH);
+                    send_state_change_event();
+                }
+            } else {
+                send_error_event("Invalid command '%s' in state GameOver.",
+                                 command);
+            }
+            break;
+        // ...(他の case は変更なし)...
+        case STATE_OPPONENT_TURN:
+        case STATE_CONNECTING:
+        case STATE_CREATING_ROOM:
+        case STATE_JOINING_ROOM:
+        case STATE_STARTING_GAME:
+        case STATE_PLACING_PIECE:
+        case STATE_SENDING_REMATCH:
+            // state_to_string は state.h/c に移動したので使えるはず
+            send_error_event(
+                "Cannot execute command '%s' in current state (%s).", command,
+                state_to_string(current_state));
+            break;
+        default:
+            send_log_event(LOG_WARN, "Ignoring command '%s' in state %s.",
+                           command, state_to_string(current_state));
+            break;
+    }
+}
+
+// --- 終了処理 (変更なし) ---
+static void cleanup() {
+    send_log_event(LOG_INFO, "Starting cleanup...");
+    ClientState state = get_client_state();
+    if (state != STATE_QUITTING && state != STATE_REMOTE_CLOSED &&
+        state != STATE_DISCONNECTED) {
+        set_client_state(STATE_QUITTING);
+        send_state_change_event();
+    }
+
+    close_connection();
+
+    pthread_t tid = get_recv_thread_id();
+    if (tid != 0) {
+        if (pthread_join(tid, NULL) != 0) {
+            send_log_event(LOG_ERROR, "Failed to join receiver thread");
+        } else {
+            send_log_event(LOG_INFO, "Receiver thread joined.");
+        }
+        set_recv_thread_id(0);
+    }
+
+    // Mutexの破棄は必要なら行う (プロセス終了時に自動解放されることが多い)
+    // pthread_mutex_destroy(get_state_mutex());
+    send_log_event(LOG_INFO, "Cleanup complete.");
 }

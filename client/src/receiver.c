@@ -1,332 +1,330 @@
 #include "receiver.h"
 
-#include "connection.h"  // disconnect_from_serverを呼ぶ可能性
-#include "ui.h"          // プロンプト再表示や盤面表示のため
+#include "json_output.h"
+#include "network.h"
+#include "state.h"
 
-// --- サーバーからのメッセージ受信スレッド ---
+// --- サーバーからのメッセージ受信スレッド (変更なし) ---
 void* receive_handler(void* arg) {
+    // ... (内容は変更なし) ...
     Message msg;
     int read_size;
+    int current_sockfd = get_sockfd();  // スレッド開始時の sockfd を取得
 
-    printf("Receiver thread started.\n");
+    // スレッド開始時に sockfd が無効なら何もせず終了
+    if (current_sockfd < 0) {
+        send_error_event("Receiver thread started with invalid sockfd.");
+        return NULL;
+    }
+    send_log_event(LOG_INFO, "Receiver thread started.");
 
-    // keep_running フラグが 0 になるまでループ
-    while (keep_running) {
-        // sockfd が有効かチェック (メインスレッドで切断される可能性)
-        if (sockfd < 0) {
-            printf("Receiver: Socket closed, exiting loop.\n");
-            break;
+    while (1) {
+        // 現在の sockfd を再確認 (接続が切断されている可能性)
+        current_sockfd = get_sockfd();
+        if (current_sockfd < 0) {
+            send_log_event(LOG_INFO, "Receiver thread detected disconnection.");
+            break;  // sockfd が無効になったらループ終了
         }
 
-        // receiveMessage はブロッキングする可能性がある
-        // タイムアウト付きの受信や select/poll
-        // を使うと、より応答性の高い停止が可能
-        read_size = receiveMessage(sockfd, &msg);
-
-        // keep_running がループ中に 0 になった場合も抜ける
-        if (!keep_running) {
-            printf("Receiver: keep_running is false, exiting loop.\n");
-            break;
-        }
+        read_size = receiveMessage(current_sockfd, &msg);
 
         if (read_size <= 0) {
-            if (read_size == 0) {
-                printf(
-                    "\n[Receiver] Server closed the connection gracefully.\n");
-            } else {  // read_size < 0
-                // ECONNRESET や ETIMEDOUT などのエラーをチェック
-                perror("\n[Receiver] Receive error");
+            // 接続が切れた場合の処理
+            pthread_mutex_lock(get_state_mutex());
+            ClientState current = get_client_state_unsafe();  // mutexロック済み
+            if (current != STATE_QUITTING && current != STATE_DISCONNECTED &&
+                current != STATE_REMOTE_CLOSED) {
+                // 自分で切断開始した場合や既に切断状態でない場合のみ更新
+                send_log_event_unsafe(LOG_INFO,
+                                      "Connection closed by server or error.");
+                set_client_state_unsafe(STATE_REMOTE_CLOSED);
+                send_state_change_event_unsafe();  // JSON出力 (ロック中)
             }
+            pthread_mutex_unlock(get_state_mutex());
 
-            pthread_mutex_lock(&state_mutex);
-            // 自分で切断処理中でなければ、リモートクローズとする
-            if (current_state != STATE_QUITTING &&
-                current_state != STATE_DISCONNECTED) {
-                current_state = STATE_REMOTE_CLOSED;
-            }
-            pthread_mutex_unlock(&state_mutex);
+            // 接続を閉じる (既に閉じているかもしれないが念のため)
+            // close_connection(); // ここで呼ぶとデッドロックの可能性?
+            // cleanupに任せる
 
-            keep_running = 0;  // 他のスレッドにも終了を通知
-            printf("[Receiver] Signaling main thread to exit (press Enter).\n");
-            // TODO: メインスレッドの入力待ちを解除するより良い方法 (pipe,
-            // signalなど)
             break;  // ループを抜けてスレッド終了
         }
 
         // 受信したメッセージを処理
         process_server_message(&msg);
 
-        // プロンプト再表示 (非同期表示更新) - UIモジュールに依頼
-        // process_server_message内で表示更新しても良いが、一貫性のためここで呼ぶ例
-        display_prompt();
-        fflush(stdout);  // プロンプトを強制表示
+        // UI更新トリガーは process_server_message 内で行う
     }
 
-    printf("Receiver thread finished.\n");
+    send_log_event(LOG_INFO, "Receiver thread finished.");
     return NULL;
 }
 
-// --- サーバーメッセージ処理 ---
+// --- サーバーメッセージ処理 (unused variable 警告修正) ---
 void process_server_message(const Message* msg) {
-    pthread_mutex_lock(&state_mutex);  // 状態変更前にロック
+    pthread_mutex_lock(get_state_mutex());
 
-    // メッセージ処理中はユーザー入力による状態変更はないはずだが念のためロック
-    printf("\n[Server Message Received] Type: %d\n", msg->type);  // デバッグ用
+    ClientState current = get_client_state_unsafe();
+    int current_room_id = get_my_room_id_unsafe();
+    uint8_t current_my_color = get_my_color_unsafe();  // <<< この変数を後で使用
 
-    // 現在の状態を確認（表示用など）
-    ClientState state_before_processing = current_state;
-    // 終了処理中は新しいメッセージを基本的に無視
-    if (state_before_processing == STATE_QUITTING ||
-        state_before_processing == STATE_REMOTE_CLOSED ||
-        state_before_processing == STATE_DISCONNECTED) {
-        printf(
-            "[Server Message Ignored] Client is shutting down or "
-            "disconnected.\n");
-        pthread_mutex_unlock(&state_mutex);
-        return;
-    }
+    // send_log_event_unsafe(LOG_DEBUG, "Processing server msg type %d",
+    // msg->type);
 
     switch (msg->type) {
+        // ...(他の case は変更なし)...
         case MSG_CREATE_ROOM_RESPONSE:
-            if (current_state == STATE_CONNECTED) {  // ロビーにいるはず
+            if (current == STATE_CREATING_ROOM) {
                 if (msg->data.createRoomResp.success) {
-                    my_room_id = msg->data.createRoomResp.roomId;
-                    current_state = STATE_WAITING_IN_ROOM;
-                    my_color = 1;  // 部屋作成者は黒 (サーバー仕様)
-                    printf(
-                        "Room created successfully! Room ID: %d. Waiting for "
-                        "opponent...\n",
-                        my_room_id);
+                    set_my_room_id_unsafe(msg->data.createRoomResp.roomId);
+                    set_client_state_unsafe(STATE_WAITING_IN_ROOM);
+                    set_my_color_unsafe(1);  // 部屋作成者は黒 (サーバー仕様)
+                    send_server_message_event_unsafe(
+                        "Room created (ID: %d). Waiting for opponent...",
+                        get_my_room_id_unsafe());      // JSON出力
+                    send_state_change_event_unsafe();  // 状態変化をJSON出力
                 } else {
-                    printf("Failed to create room: %s\n",
-                           msg->data.createRoomResp.message);
-                    // current_state は STATE_CONNECTED のまま
+                    send_server_message_event_unsafe(
+                        "Failed to create room: %s",
+                        msg->data.createRoomResp.message);
+                    set_client_state_unsafe(STATE_CONNECTED);  // ロビーに戻る
+                    send_state_change_event_unsafe();
                 }
             } else {
-                fprintf(stderr,
-                        "Warning: Received CREATE_ROOM_RESPONSE in unexpected "
-                        "state %d\n",
-                        current_state);
+                send_log_event_unsafe(
+                    LOG_WARN,
+                    "Received CREATE_ROOM_RESPONSE in unexpected state: %s",
+                    state_to_string(current));
             }
             break;
-
-        case MSG_JOIN_ROOM_RESPONSE:                 // 参加応答処理を追加
-            if (current_state == STATE_CONNECTED) {  // ロビーにいるはず
+        case MSG_JOIN_ROOM_RESPONSE:
+            if (current == STATE_JOINING_ROOM) {
                 if (msg->data.joinRoomResp.success) {
-                    my_room_id = msg->data.joinRoomResp.roomId;
-                    current_state = STATE_WAITING_IN_ROOM;
-                    my_color = 2;  // 部屋参加者は白 (サーバー仕様)
-                    printf(
-                        "Successfully joined room %d. Waiting for host to "
-                        "start...\n",
-                        my_room_id);
-                    // 盤面情報は GAME_START_NOTICE で来るはず
+                    set_my_room_id_unsafe(msg->data.joinRoomResp.roomId);
+                    set_client_state_unsafe(
+                        STATE_WAITING_IN_ROOM);  // 相手(ホスト)の開始待ち
+                    set_my_color_unsafe(2);      // 参加者は白 (サーバー仕様)
+                    send_server_message_event_unsafe(
+                        "Joined room %d. Waiting for host...",
+                        get_my_room_id_unsafe());
+                    send_state_change_event_unsafe();
                 } else {
-                    printf("Failed to join room %d: %s\n",
-                           msg->data.joinRoomResp.roomId,
-                           msg->data.joinRoomResp.message);
-                    // current_state は STATE_CONNECTED のまま
+                    send_server_message_event_unsafe(
+                        "Failed to join room: %s",
+                        msg->data.joinRoomResp.message);
+                    set_client_state_unsafe(STATE_CONNECTED);  // ロビーに戻る
+                    send_state_change_event_unsafe();
                 }
             } else {
-                fprintf(stderr,
-                        "Warning: Received JOIN_ROOM_RESPONSE in unexpected "
-                        "state %d\n",
-                        current_state);
+                send_log_event_unsafe(
+                    LOG_WARN,
+                    "Received JOIN_ROOM_RESPONSE in unexpected state: %s",
+                    state_to_string(current));
             }
             break;
-
         case MSG_PLAYER_JOINED_NOTICE:
-            if (current_state == STATE_WAITING_IN_ROOM &&
-                msg->data.playerJoinedNotice.roomId == my_room_id) {
-                printf(
-                    "Opponent joined the room! You (%s) can now start the "
-                    "game.\n",
-                    (my_color == 1 ? "Host" : "Player 2"));
-                // 状態はまだ WAITING_IN_ROOM (ホストの start 待ち)
+            if (current == STATE_WAITING_IN_ROOM &&
+                msg->data.playerJoinedNotice.roomId == current_room_id) {
+                send_server_message_event_unsafe("Opponent joined room %d.",
+                                                 current_room_id);
+                // 状態は変わらないが、UI更新のため stateChange
+                // を送っても良いかも send_state_change_event_unsafe();
             }
             break;
-
         case MSG_GAME_START_NOTICE:
-            // 部屋にいて、ゲーム開始を待っている状態のはず
-            if ((current_state == STATE_WAITING_IN_ROOM ||
-                 current_state == STATE_GAME_OVER /* 再戦時 */) &&
-                msg->data.gameStartNotice.roomId == my_room_id) {
-                // 自分の色と初期盤面を設定
-                my_color = msg->data.gameStartNotice.yourColor;
-                memcpy(game_board, msg->data.gameStartNotice.board,
-                       sizeof(game_board));
-                printf("Game Start! You are %s.\n",
-                       (my_color == 1) ? "Black (X)" : "White (O)");
-                display_board();  // UIモジュール呼び出し
+            if (msg->data.gameStartNotice.roomId == current_room_id) {
+                // 自分がホストで開始待ちだったか、参加者で開始待ちだった場合に状態遷移
+                if (current == STATE_WAITING_IN_ROOM ||
+                    current == STATE_STARTING_GAME) {
+                    set_my_color_unsafe(msg->data.gameStartNotice.yourColor);
+                    set_game_board_unsafe(
+                        msg->data.gameStartNotice.board);  // state.cで実装
 
-                // サーバーは初手プレイヤーに YOUR_TURN_NOTICE
-                // を送るはずなので、
-                // ここでターン状態を決めずに、YOUR_TURN_NOTICE
-                // を待つ方が確実かもしれない。 もし YOUR_TURN_NOTICE
-                // が来ない仕様ならここで設定。 今回は YOUR_TURN_NOTICE
-                // が来ると仮定し、一旦相手ターンにしておく。
-                current_state =
-                    STATE_OPPONENT_TURN;  // 一旦相手ターンに（YOUR_TURNが来れば変わる）
-                printf("Waiting for turn notification...\n");
-            } else {
-                fprintf(stderr,
-                        "Warning: Received GAME_START_NOTICE in unexpected "
-                        "state %d or for wrong room %d (my room %d)\n",
-                        current_state, msg->data.gameStartNotice.roomId,
-                        my_room_id);
+                    send_server_message_event_unsafe(
+                        "Game Start! You are %s.", (get_my_color_unsafe() == 1)
+                                                       ? "Black (X)"
+                                                       : "White (O)");
+                    send_board_update_event_unsafe();  // 盤面をJSON出力
+
+                    if (get_my_color_unsafe() == 1) {  // 自分が黒番(先手)の場合
+                        // サーバー仕様として、先手は必ず最初に YOUR_TURN
+                        // が来るはず set_client_state_unsafe(STATE_MY_TURN); //
+                        // YOUR_TURN を待つ
+                        send_log_event_unsafe(
+                            LOG_INFO, "Waiting for YOUR_TURN notice...");
+                    } else {  // 自分が白番(後手)の場合
+                        set_client_state_unsafe(STATE_OPPONENT_TURN);
+                    }
+                    send_state_change_event_unsafe();  // 状態変化をJSON出力
+                } else {
+                    send_log_event_unsafe(
+                        LOG_WARN,
+                        "Received GAME_START_NOTICE in unexpected state: %s",
+                        state_to_string(current));
+                }
             }
             break;
-
         case MSG_UPDATE_BOARD_NOTICE:
-            // 相手のターン中、または自分のターン中に相手の手の情報が来た場合
-            if ((current_state == STATE_OPPONENT_TURN ||
-                 current_state == STATE_MY_TURN) &&
-                msg->data.updateBoardNotice.roomId == my_room_id) {
-                // 送信者が相手の場合のみ表示（自分の手に対する更新通知は内部処理のみ）
-                if (msg->data.updateBoardNotice.playerColor != my_color) {
-                    printf("Opponent (Player %d) placed a piece at (%d, %d).\n",
-                           msg->data.updateBoardNotice.playerColor,
-                           msg->data.updateBoardNotice.row,
-                           msg->data.updateBoardNotice.col);
-                }
-                // 盤面を更新
-                memcpy(game_board, msg->data.updateBoardNotice.board,
-                       sizeof(game_board));
-                display_board();  // UIモジュール呼び出し
-
-                // ターン状態は YOUR_TURN_NOTICE で変更されるのを待つ
-            } else {
-                fprintf(stderr,
-                        "Warning: Received UPDATE_BOARD_NOTICE in unexpected "
-                        "state %d or for wrong room %d (my room %d)\n",
-                        current_state, msg->data.updateBoardNotice.roomId,
-                        my_room_id);
+            if (msg->data.updateBoardNotice.roomId == current_room_id) {
+                // 盤面は常に更新
+                set_game_board_unsafe(msg->data.updateBoardNotice.board);
+                send_server_message_event_unsafe(
+                    "Board updated by player %d at (%d, %d).",
+                    msg->data.updateBoardNotice.playerColor,
+                    msg->data.updateBoardNotice.row,
+                    msg->data.updateBoardNotice.col);
+                send_board_update_event_unsafe();  // 盤面をJSON出力
+                // 状態遷移は YOUR_TURN_NOTICE で行う
             }
             break;
-
         case MSG_YOUR_TURN_NOTICE:
-            // 相手のターンだった場合、自分のターンに変更
-            if (current_state == STATE_OPPONENT_TURN &&
-                msg->data.yourTurnNotice.roomId == my_room_id) {
-                current_state = STATE_MY_TURN;
-                printf("It's your turn.\n");
-            } else {
-                // 既に自分のターンだった場合などは無視しても良い
-                fprintf(stderr,
-                        "Warning: Received YOUR_TURN_NOTICE in unexpected "
-                        "state %d or for wrong room %d (my room %d)\n",
-                        current_state, msg->data.yourTurnNotice.roomId,
-                        my_room_id);
-            }
-            break;
-
-        case MSG_INVALID_MOVE_NOTICE:
-            // 自分のターン中に無効手通知が来た場合
-            if (current_state == STATE_MY_TURN &&
-                msg->data.invalidMoveNotice.roomId == my_room_id) {
-                printf("Server: Invalid move! %s\n",
-                       msg->data.invalidMoveNotice.message);
-                // 状態は MY_TURN のまま、再入力を促す
-            }
-            break;
-
-        case MSG_GAME_OVER_NOTICE:
-            // ゲーム中のターンのはず
-            if ((current_state == STATE_MY_TURN ||
-                 current_state == STATE_OPPONENT_TURN) &&
-                msg->data.gameOverNotice.roomId == my_room_id) {
-                current_state = STATE_GAME_OVER;
-                // 盤面最終状態を表示しても良い
-                display_board();
-                printf("Game Over! %s\n", msg->data.gameOverNotice.message);
-                uint8_t winner = msg->data.gameOverNotice.winner;
-                if (winner == my_color) {
-                    printf("You Win!\n");
-                } else if (winner == 0) {  // 引き分け
-                    printf("It's a Draw!\n");
-                } else if (winner == 3) {  // 相手切断など
-                    printf("Opponent disconnected or game aborted.\n");
-                } else {  // 相手の色が勝利
-                    printf("You Lose.\n");
+            if (msg->data.yourTurnNotice.roomId == current_room_id) {
+                // 相手ターンだった場合、またはゲーム開始直後(先手)に自分のターンになる
+                if (current == STATE_OPPONENT_TURN ||
+                    current == STATE_WAITING_IN_ROOM ||
+                    current == STATE_STARTING_GAME ||
+                    current == STATE_PLACING_PIECE) {
+                    set_client_state_unsafe(STATE_MY_TURN);
+                    send_your_turn_event_unsafe();  // 自分のターン通知をJSON出力
+                    send_state_change_event_unsafe();  // 状態変化をJSON出力
+                } else {
+                    send_log_event_unsafe(
+                        LOG_WARN,
+                        "Received YOUR_TURN_NOTICE in unexpected state: %s",
+                        state_to_string(current));
                 }
-                // 再戦のプロンプト表示は REMATCH_OFFER_NOTICE を待つ
-            } else {
-                fprintf(stderr,
-                        "Warning: Received GAME_OVER_NOTICE in unexpected "
-                        "state %d or for wrong room %d (my room %d)\n",
-                        current_state, msg->data.gameOverNotice.roomId,
-                        my_room_id);
             }
             break;
+        case MSG_INVALID_MOVE_NOTICE:
+            if (msg->data.invalidMoveNotice.roomId == current_room_id) {
+                // 自分の手を送信中(PLACING_PIECE)だった場合に発生するはず
+                if (current == STATE_PLACING_PIECE) {
+                    send_server_message_event_unsafe(
+                        "Server: Invalid move! %s",
+                        msg->data.invalidMoveNotice.message);
+                    set_client_state_unsafe(
+                        STATE_MY_TURN);  // 再度自分のターンに戻る
+                    send_state_change_event_unsafe();
+                } else {
+                    send_log_event_unsafe(
+                        LOG_WARN,
+                        "Received INVALID_MOVE_NOTICE in unexpected state: %s",
+                        state_to_string(current));
+                }
+            }
+            break;
+        case MSG_GAME_OVER_NOTICE:
+            if (msg->data.gameOverNotice.roomId == current_room_id) {
+                if (current == STATE_MY_TURN ||
+                    current == STATE_OPPONENT_TURN ||
+                    current == STATE_PLACING_PIECE) {
+                    set_client_state_unsafe(STATE_GAME_OVER);
 
+                    // result_message バッファのサイズを増やす (例: 256)
+                    // MAX_MESSAGE_LEN (128) + 固定文字列の最大長 + 終端文字
+                    // を考慮
+                    char result_message[256];  // <<< サイズを増やす
+                    uint8_t winner = msg->data.gameOverNotice.winner;
+                    const char* base_message = msg->data.gameOverNotice.message;
+
+                    // 安全のため、ベースメッセージが長すぎる場合は切り詰める
+                    char safe_base_message[MAX_MESSAGE_LEN];
+                    strncpy(safe_base_message, base_message,
+                            MAX_MESSAGE_LEN - 1);
+                    safe_base_message[MAX_MESSAGE_LEN - 1] = '\0';
+
+                    if (winner == current_my_color) {
+                        snprintf(result_message, sizeof(result_message),
+                                 "%s You Win!", safe_base_message);
+                    } else if (winner == 0) {  // Draw
+                        snprintf(result_message, sizeof(result_message),
+                                 "%s It's a Draw!", safe_base_message);
+                    } else if (winner == 3) {  // Opponent disconnect / error
+                        snprintf(result_message, sizeof(result_message),
+                                 "%s Opponent disconnected or error.",
+                                 safe_base_message);
+                    } else {  // Lost
+                        snprintf(result_message, sizeof(result_message),
+                                 "%s You Lose.", safe_base_message);
+                    }
+                    // snprintf
+                    // は常にヌル終端するので、バッファオーバーフローは防がれるが、切り詰めは起こりうる
+                    result_message[sizeof(result_message) - 1] =
+                        '\0';  // 念のため終端保証
+
+                    send_game_over_event_unsafe(winner, result_message);
+                    send_state_change_event_unsafe();
+                } else {
+                    send_log_event_unsafe(
+                        LOG_WARN,
+                        "Received GAME_OVER_NOTICE in unexpected state: %s",
+                        state_to_string(current));
+                }
+            }
+            break;
         case MSG_REMATCH_OFFER_NOTICE:
-            // ゲーム終了状態のはず
-            if (current_state == STATE_GAME_OVER &&
-                msg->data.rematchOfferNotice.roomId == my_room_id) {
-                printf(
-                    "Do you want a rematch? (Enter 'rematch yes' or 'rematch "
-                    "no')\n");
+            if (msg->data.rematchOfferNotice.roomId == current_room_id) {
+                if (current == STATE_GAME_OVER) {
+                    send_rematch_offer_event_unsafe();  // 再戦要求通知をJSON出力
+                    // 状態は GAME_OVER のまま
+                } else {
+                    send_log_event_unsafe(
+                        LOG_WARN,
+                        "Received REMATCH_OFFER_NOTICE in unexpected state: %s",
+                        state_to_string(current));
+                }
             }
             break;
-
         case MSG_REMATCH_RESULT_NOTICE:
-            // ゲーム終了状態のはず
-            if (current_state == STATE_GAME_OVER &&
-                msg->data.rematchResultNotice.roomId == my_room_id) {
-                uint8_t result = msg->data.rematchResultNotice.result;
-                if (result == 1) {  // Agreed
-                    printf("Rematch agreed! Starting new game soon...\n");
-                    // 状態は GAME_START_NOTICE で更新されるのを待つ
-                } else if (result == 0) {  // Disagreed
-                    printf(
-                        "Rematch declined by opponent. Room will be closed.\n");
-                    // 状態は ROOM_CLOSED_NOTICE で更新されるのを待つ
-                    // または、ここでロビーに戻るように状態変更しても良い
-                    // current_state = STATE_CONNECTED;
-                    // my_room_id = -1; my_color = 0; ...
-                } else {  // result == 2 (Timeout)
-                    printf("Rematch timed out. Room will be closed.\n");
-                    // 状態は ROOM_CLOSED_NOTICE で更新されるのを待つ
+            if (msg->data.rematchResultNotice.roomId == current_room_id) {
+                // 再戦要求を送信中(SENDING_REMATCH)またはゲームオーバー状態
+                if (current == STATE_GAME_OVER ||
+                    current == STATE_SENDING_REMATCH) {
+                    uint8_t result = msg->data.rematchResultNotice.result;
+                    send_rematch_result_event_unsafe(
+                        result);        // 再戦結果をJSON出力
+                    if (result == 1) {  // 成立した場合
+                        // GAME_START を待つ
+                        set_client_state_unsafe(
+                            STATE_WAITING_IN_ROOM);  // 仮に待機状態へ
+                    } else {                         // 不成立の場合
+                        // ROOM_CLOSEDを待つか、ここでロビーに戻っても良い
+                        set_client_state_unsafe(
+                            STATE_GAME_OVER);  // ゲームオーバー状態に戻る
+                    }
+                    send_state_change_event_unsafe();  // 状態変化を送信
+                } else {
+                    send_log_event_unsafe(LOG_WARN,
+                                          "Received REMATCH_RESULT_NOTICE in "
+                                          "unexpected state: %s",
+                                          state_to_string(current));
                 }
             }
             break;
 
         case MSG_ROOM_CLOSED_NOTICE:
-            printf("Notification: Room %d closed: %s\n",
-                   msg->data.roomClosedNotice.roomId,
-                   msg->data.roomClosedNotice.reason);
-            // 自分がその部屋にいた場合、状態を更新してロビーに戻る
-            if (msg->data.roomClosedNotice.roomId == my_room_id) {
-                my_room_id = -1;
-                my_color = 0;
-                memset(game_board, 0, sizeof(game_board));
-                // 切断状態でなければロビーへ
-                if (current_state != STATE_REMOTE_CLOSED &&
-                    current_state != STATE_QUITTING) {
-                    current_state = STATE_CONNECTED;
-                    printf("Returned to lobby.\n");
+            if (msg->data.roomClosedNotice.roomId == current_room_id) {
+                send_server_message_event_unsafe(
+                    "Room %d closed: %s", msg->data.roomClosedNotice.roomId,
+                    msg->data.roomClosedNotice.reason);
+                reset_room_info_unsafe();
+                if (current != STATE_QUITTING &&
+                    current != STATE_REMOTE_CLOSED) {
+                    set_client_state_unsafe(STATE_CONNECTED);
+                    send_state_change_event_unsafe();
                 }
             }
             break;
-
         case MSG_ERROR_NOTICE:
-            // サーバーからの汎用エラー
-            printf("[Server Error] %s\n", msg->data.errorNotice.message);
-            // エラー内容によっては状態を変更する必要があるかもしれない
+            send_error_event_unsafe("Server Error: %s",
+                                    msg->data.errorNotice.message);
+            // 状態遷移はエラー内容による
             break;
 
-            // 他のメッセージタイプに対する処理を追加
-            // case MSG_LIST_ROOMS_RESPONSE:
-            // handle_list_rooms_response(&msg->data.listRoomsResp);
-            // break;
-            // case MSG_PONG:
-            // handle_pong();
-            // break;
-
         default:
-            printf("Received unhandled message type: %d\n", msg->type);
+            send_log_event_unsafe(
+                LOG_WARN, "Received unhandled message type: %d", msg->type);
             break;
     }
 
-    pthread_mutex_unlock(&state_mutex);  // ロック解除
+    pthread_mutex_unlock(get_state_mutex());
 }
