@@ -1,5 +1,5 @@
 # コンテナ名
-$CONTAINER_NAME = "networkA"
+$CONTAINER_NAME = "networkA2"
 
 # イメージ名
 $IMAGE_NAME = "ubuntu_net:24.04"
