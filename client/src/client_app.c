@@ -173,9 +173,18 @@ static void process_command(const char* json_command) {
         const char* port_ptr = strstr(json_command, "\"serverPort\":");
         if (ip_ptr) {
             sscanf(ip_ptr + strlen("\"serverIp\":\""), "%63[^\"]", serverIp);
+            strncpy(g_server_ip, serverIp, sizeof(g_server_ip) - 1);
+            g_server_ip[sizeof(g_server_ip) - 1] =
+                '\0';  // Ensure null termination
         }
         if (port_ptr) {
             sscanf(port_ptr + strlen("\"serverPort\":"), "%d", &serverPort);
+            if (serverPort > 0 && serverPort <= 65535) {
+                g_server_port = serverPort;  // グローバル変数に保存
+            } else {
+                send_error_event("Invalid server port: %d", serverPort);
+                return;
+            }
         }
         // ここでconnect処理を呼び出す
         ClientState current_state_before_connect = get_client_state();

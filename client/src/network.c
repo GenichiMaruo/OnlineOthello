@@ -20,6 +20,9 @@ int connect_to_server() {
         strcpy(server_ip, "127.0.0.1");  // localhost
     }
 
+    // ipアドレスを表示
+    send_log_event(LOG_INFO, "Connecting to server at %s:%d", server_ip,
+                   server_port);         // ログ通知
     set_client_state(STATE_CONNECTING);  // 接続試行中状態へ
     send_state_change_event();           // Node.jsに状態変化を通知
 
