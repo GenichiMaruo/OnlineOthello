@@ -21,7 +21,15 @@ export default function Home() {
   const isDisabled =
     gameState.clientState === "Connecting" ||
     gameState.clientState === "CreatingRoom" ||
-    // ...(省略)...
+    gameState.clientState === "JoiningRoom" ||
+    gameState.clientState === "StartingGame" ||
+    gameState.clientState === "PlacingPiece" ||
+    gameState.clientState === "SendingRematch" ||
+    gameState.clientState === "GameOver" || // ゲームオーバー中も盤面操作は不可
+    gameState.clientState === "OpponentTurn" || // 相手ターン中も操作不可
+    !gameState.isConnected || // 未接続
+    gameState.clientState === "Quitting" ||
+    gameState.clientState === "Disconnected" ||
     gameState.clientState === "ConnectionClosed";
 
   // ゲームがアクティブかどうか (盤面を表示するかどうか)

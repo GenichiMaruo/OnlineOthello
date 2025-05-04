@@ -68,6 +68,8 @@ export const useOthelloGame = () => {
         clientState: "Lobby",
         errorMessage: null,
       }));
+
+      ws.current?.send(JSON.stringify({ command: "getStatus" })); // 初期状態を取得
     };
 
     ws.current.onclose = () => {

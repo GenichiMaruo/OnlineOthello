@@ -155,6 +155,16 @@ static void process_command(const char* json_command) {
     } else if (strcmp(command, "getStatus") == 0) {
         // 特に処理なし (状態は自動的に更新される)
         send_log_event(LOG_INFO, "Status command received.");
+        // 現在の状態を強制的にJSONで送信
+        pthread_mutex_lock(get_state_mutex());
+        send_state_change_event_unsafe();
+        if (get_my_room_id_unsafe() != -1 &&
+            get_client_state_unsafe() != STATE_QUITTING &&
+            get_client_state_unsafe() !=
+                STATE_DISCONNECTED) {          // 部屋にいる場合
+            send_board_update_event_unsafe();  // 盤面も送る
+        }
+        pthread_mutex_unlock(get_state_mutex());
         return;
     } else {
         send_error_event("Unknown command: %s", command);
@@ -170,21 +180,6 @@ static void process_command(const char* json_command) {
         set_client_state(STATE_QUITTING);
         send_state_change_event();  // 状態変化通知
         return;
-    }
-
-    if (strcmp(command, "getStatus") == 0) {
-        // 現在の状態を強制的にJSONで送信
-        pthread_mutex_lock(get_state_mutex());
-        send_state_change_event_unsafe();
-        if (get_my_room_id_unsafe() != -1 &&
-            get_client_state_unsafe() != STATE_QUITTING &&
-            get_client_state_unsafe() !=
-                STATE_DISCONNECTED) {          // 部屋にいる場合
-            send_board_update_event_unsafe();  // 盤面も送る
-        }
-        // 必要なら他の情報も送信
-        pthread_mutex_unlock(get_state_mutex());
-        return;  // コマンド処理終了
     }
 
     switch (current_state) {
