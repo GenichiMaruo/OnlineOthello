@@ -7,6 +7,18 @@
 int connect_to_server() {
     struct sockaddr_in server_addr;
     int temp_sockfd;
+    char* server_ip = g_server_ip;    // グローバル変数からIPアドレスを取得
+    int server_port = g_server_port;  // グローバル変数からポート番号を取得
+    if (server_port <= 0 || server_port > 65535) {
+        send_error_event("Invalid server port: %d", server_port);
+        return -1;
+    }
+    if (strlen(server_ip) == 0) {
+        send_error_event("Invalid server IP address: '%s'", server_ip);
+        return -1;
+    } else if (strcmp(server_ip, "localhost") == 0) {
+        strcpy(server_ip, "127.0.0.1");  // localhost
+    }
 
     set_client_state(STATE_CONNECTING);  // 接続試行中状態へ
     send_state_change_event();           // Node.jsに状態変化を通知
@@ -23,8 +35,8 @@ int connect_to_server() {
     // (中略 - アドレス設定は同じ)
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SERVER_PORT);
-    if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) {
+    server_addr.sin_port = htons(server_port);  // ポート番号を設定
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
         perror("inet_pton failed");
         send_error_event("Invalid server IP address");
         close(temp_sockfd);

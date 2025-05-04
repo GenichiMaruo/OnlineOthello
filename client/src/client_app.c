@@ -11,15 +11,15 @@ static void handle_input_commands();
 static void process_command(const char* json_command);
 static void cleanup();
 
+// --- グローバル変数 ---
+// サーバーのIPアドレスとポート番号 (デフォルト値)
+char g_server_ip[64] = "127.0.0.1";  // デフォルト値
+int g_server_port = 10000;           // デフォルト値
+
 // --- main関数 ---
 int main() {
     initialize_state();
     send_log_event(LOG_INFO, "Client starting...");
-
-    if (connect_to_server() < 0) {
-        // エラーは connect_to_server 内でJSON出力済み
-        return 1;
-    }
 
     pthread_t tid;
     if (pthread_create(&tid, NULL, receive_handler, NULL) != 0) {
@@ -40,7 +40,7 @@ int main() {
     return 0;
 }
 
-// --- 入力コマンド処理ループ (変更なし) ---
+// --- 入力コマンド処理ループ ---
 static void handle_input_commands() {
     char input_buffer[512];
 
@@ -84,7 +84,9 @@ static void process_command(const char* json_command) {
     char roomName[MAX_ROOM_NAME_LEN] = {0};
     int roomId = -1;
     int row = -1, col = -1;
-    int agree = -1;  // 0 or 1 for boolean
+    int agree = -1;           // 0 or 1 for boolean
+    char serverIp[64] = {0};  // connect 用
+    int serverPort = -1;      // connect 用
 
     const char* cmd_ptr = strstr(json_command, "\"command\":\"");
     if (cmd_ptr) {
@@ -166,6 +168,48 @@ static void process_command(const char* json_command) {
         }
         pthread_mutex_unlock(get_state_mutex());
         return;
+    } else if (strcmp(command, "connect") == 0) {
+        const char* ip_ptr = strstr(json_command, "\"serverIp\":\"");
+        const char* port_ptr = strstr(json_command, "\"serverPort\":");
+        if (ip_ptr) {
+            sscanf(ip_ptr + strlen("\"serverIp\":\""), "%63[^\"]", serverIp);
+        }
+        if (port_ptr) {
+            sscanf(port_ptr + strlen("\"serverPort\":"), "%d", &serverPort);
+        }
+        // ここでconnect処理を呼び出す
+        ClientState current_state_before_connect = get_client_state();
+        if (current_state_before_connect == STATE_DISCONNECTED ||
+            current_state_before_connect == STATE_REMOTE_CLOSED) {
+            send_log_event(LOG_INFO, "Attempting to connect to server...");
+            int connect_result = connect_to_server();  // network.c の関数を呼ぶ
+
+            if (connect_result >= 0) {
+                // 接続成功 -> 受信スレッドを開始
+                pthread_t tid;
+                if (pthread_create(&tid, NULL, receive_handler, NULL) != 0) {
+                    perror("Failed to create receiver thread after connect");
+                    send_error_event(
+                        "Failed to start receiver thread after connect");
+                    // 接続は成功したが受信できない -> 切断処理
+                    close_connection();
+                    set_client_state(STATE_DISCONNECTED);  // 状態を戻す
+                    send_state_change_event();
+                } else {
+                    set_recv_thread_id(tid);  // スレッドIDを保存
+                    // 接続成功の通知は connect_to_server 内で行われる
+                }
+            } else {
+                // 接続失敗の通知は connect_to_server 内で行われる
+            }
+        } else {
+            send_log_event(
+                LOG_WARN,
+                "Already connected or connecting. Ignoring 'connect' command.");
+            send_error_event(
+                "Already connected or connecting.");  // フロントにも通知
+        }
+        return;  // connect コマンドの処理終了
     } else {
         send_error_event("Unknown command: %s", command);
         return;
@@ -257,7 +301,6 @@ static void process_command(const char* json_command) {
                                  command);
             }
             break;
-        // ...(他の case は変更なし)...
         case STATE_OPPONENT_TURN:
         case STATE_CONNECTING:
         case STATE_CREATING_ROOM:
@@ -265,7 +308,6 @@ static void process_command(const char* json_command) {
         case STATE_STARTING_GAME:
         case STATE_PLACING_PIECE:
         case STATE_SENDING_REMATCH:
-            // state_to_string は state.h/c に移動したので使えるはず
             send_error_event(
                 "Cannot execute command '%s' in current state (%s).", command,
                 state_to_string(current_state));
@@ -277,7 +319,6 @@ static void process_command(const char* json_command) {
     }
 }
 
-// --- 終了処理 (変更なし) ---
 static void cleanup() {
     send_log_event(LOG_INFO, "Starting cleanup...");
     ClientState state = get_client_state();
