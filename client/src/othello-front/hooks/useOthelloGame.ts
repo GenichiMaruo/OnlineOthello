@@ -18,6 +18,7 @@ interface CEvent {
 // フックの状態
 interface GameState {
   isConnected: boolean;
+  isConnectedToServer: boolean; // サーバーに接続中かどうか
   clientState: string; // Cクライアントの状態名
   roomId: number | null;
   myColor: number | null; // 1: Black, 2: White
@@ -39,6 +40,7 @@ const initialBoard = () =>
 export const useOthelloGame = () => {
   const [gameState, setGameState] = useState<GameState>({
     isConnected: false,
+    isConnectedToServer: false,
     clientState: "Disconnected",
     roomId: null,
     myColor: null,
@@ -79,6 +81,7 @@ export const useOthelloGame = () => {
       setGameState((prev) => ({
         ...prev,
         isConnected: false,
+        isConnectedToServer: false,
         clientState: "Disconnected",
         roomId: null,
         myColor: null,
@@ -102,6 +105,7 @@ export const useOthelloGame = () => {
       setGameState((prev) => ({
         ...prev,
         isConnected: false,
+        isConnectedToServer: false,
         errorMessage: "WebSocket connection error.",
       }));
       if (ws.current && ws.current.readyState !== WebSocket.CLOSED) {
@@ -131,6 +135,7 @@ export const useOthelloGame = () => {
                 typeof data.color === "number" ? data.color : prev.myColor;
               newState.isMyTurn = data.state === "MyTurn";
               newState.isGameOver = data.state === "GameOver";
+              newState.isConnectedToServer = true; // サーバーに接続中
               if (data.state !== "GameOver") {
                 newState.rematchOffered = false;
               }
@@ -307,6 +312,21 @@ export const useOthelloGame = () => {
     }
   }, []);
 
+  const connectToServer = useCallback(
+    (serverIp: string, serverPort: number) => {
+      // ミドルウェアとサーバーの接続を確立するためのコマンドを送信
+      sendCommand({ command: "connect", serverIp, serverPort });
+      // サーバー接続後の状態を更新するための処理を追加
+      setGameState((prev) => ({
+        ...prev,
+        isConnectedToServer: true,
+        clientState: "Connecting",
+        errorMessage: null,
+      }));
+    },
+    [sendCommand]
+  );
+
   // ゲーム操作用関数
   const createRoom = useCallback(
     (roomName: string = "DefaultRoom") => {
@@ -380,5 +400,6 @@ export const useOthelloGame = () => {
     placePiece,
     sendRematchResponse,
     quitGame,
+    connectToServer,
   };
 };

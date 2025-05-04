@@ -15,6 +15,7 @@ export default function Home() {
     placePiece,
     sendRematchResponse,
     quitGame,
+    connectToServer,
   } = useOthelloGame();
 
   // 操作不能にする状態かを判定 (isDisabled の定義は変更なし)
@@ -83,6 +84,10 @@ export default function Home() {
             onStartGame={startGame}
             onRematchResponse={sendRematchResponse}
             onQuit={quitGame}
+            onConnect={(ip, port) => {
+              console.log("Connect to server", ip, port);
+              connectToServer(ip, port); // 実装済み関数
+            }}
           />
         </div>
         {/* 右側: 盤面エリア (ゲームがアクティブな場合) */}

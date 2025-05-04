@@ -14,6 +14,7 @@ interface ControlPanelProps {
   onStartGame: () => void;
   onRematchResponse: (agree: boolean) => void;
   onQuit: () => void;
+  onConnect: (ip: string, port: number) => void;
 }
 
 const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -26,9 +27,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onStartGame,
   onRematchResponse,
   onQuit,
+  onConnect,
 }) => {
   const [joinRoomId, setJoinRoomId] = useState("");
   const [createRoomName, setCreateRoomName] = useState(""); // オプション: 部屋名入力
+  const [serverIp, setServerIp] = useState("");
+  const [serverPort, setServerPort] = useState("");
 
   const isLoading =
     clientState === "Connecting" ||
@@ -54,13 +58,48 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     setCreateRoomName("");
   };
 
+  const handleConnect = () => {
+    const portNumber = serverPort ? parseInt(serverPort, 10) : 10000;
+    if (!serverIp) {
+      alert("Please enter a valid server IP.");
+      return;
+    }
+    onConnect(serverIp, isNaN(portNumber) ? 10000 : portNumber);
+  };
+
   return (
     <Card className="w-full max-w-md mx-auto my-4">
       <CardHeader>
         <CardTitle>Controls</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Lobby Controls */}
+        {/* 接続画面 */}
+        {clientState === "Disconnected" && (
+          <div className="space-y-2">
+            <Input
+              type="text"
+              placeholder="Server IP (e.g. 127.0.0.1)"
+              value={serverIp}
+              onChange={(e) => setServerIp(e.target.value)}
+              disabled={isLoading}
+            />
+            <Input
+              type="number"
+              placeholder="Port (default: 10000)"
+              value={serverPort}
+              onChange={(e) => setServerPort(e.target.value)}
+              disabled={isLoading}
+            />
+            <Button onClick={handleConnect} disabled={isLoading || !serverIp}>
+              {isLoading && clientState === "Connecting" ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
+              Connect to Server
+            </Button>
+          </div>
+        )}
+
+        {/* 以下は既存のロビーなどの表示（省略せずに残す） */}
         {clientState === "Lobby" && (
           <div className="space-y-2">
             <div className="flex space-x-2">
@@ -96,7 +135,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
           </div>
         )}
 
-        {/* Waiting in Room Controls */}
+        {/* その他のUI（WaitingInRoom、GameOverなど）はそのまま残す */}
+
         {clientState === "WaitingInRoom" &&
           myColor === 1 &&
           roomId !== null && (
@@ -107,6 +147,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               Start Game
             </Button>
           )}
+
         {clientState === "WaitingInRoom" &&
           myColor === 2 &&
           roomId !== null && (
@@ -115,7 +156,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             </p>
           )}
 
-        {/* Game Over Controls */}
         {clientState === "GameOver" && rematchOffered && roomId !== null && (
           <div className="space-y-2">
             <p className="text-sm font-medium">Rematch?</p>
@@ -123,7 +163,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               <Button
                 onClick={() => onRematchResponse(true)}
                 disabled={isLoading}
-                variant="default"
               >
                 {isLoading && clientState === "SendingRematch" ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -144,7 +183,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
           </div>
         )}
 
-        {/* Loading Indicator */}
         {isLoading && (
           <div className="flex items-center justify-center text-sm text-muted-foreground">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -152,7 +190,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
           </div>
         )}
 
-        {/* Quit Button */}
         {clientState !== "Disconnected" &&
           clientState !== "Connecting" &&
           clientState !== "Quitting" && (
