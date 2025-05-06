@@ -219,6 +219,10 @@ static void process_command(const char* json_command) {
                 "Already connected or connecting.");  // フロントにも通知
         }
         return;  // connect コマンドの処理終了
+    } else if (strcmp(command, "quit") == 0) {
+        set_client_state(STATE_QUITTING);
+        send_state_change_event();  // 状態変化通知
+        return;
     } else {
         send_error_event("Unknown command: %s", command);
         return;
@@ -228,12 +232,6 @@ static void process_command(const char* json_command) {
     int current_room_id = get_my_room_id();
     uint8_t current_color = get_my_color();
     Message msg;
-
-    if (strcmp(command, "quit") == 0) {
-        set_client_state(STATE_QUITTING);
-        send_state_change_event();  // 状態変化通知
-        return;
-    }
 
     switch (current_state) {
         case STATE_CONNECTED:
@@ -266,8 +264,8 @@ static void process_command(const char* json_command) {
                 msg.type = MSG_START_GAME_REQUEST;
                 msg.data.startGameReq.roomId = current_room_id;
                 if (send_message_to_server(&msg)) {
-                    set_client_state(STATE_STARTING_GAME);
-                    send_state_change_event();
+                    // set_client_state(STATE_STARTING_GAME);
+                    // send_state_change_event();
                 }
             } else {
                 send_error_event("Invalid command '%s' in state WaitingInRoom.",

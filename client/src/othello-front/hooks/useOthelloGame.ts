@@ -200,6 +200,14 @@ export const useOthelloGame = () => {
                 newState.roomId = null;
                 newState.clientState = "Lobby";
               }
+              if (errorToShow?.includes("room full")) {
+                newState.roomId = null;
+                newState.clientState = "Lobby";
+              }
+              if (errorToShow?.includes("Waiting for opponent")) {
+                newState.isMyTurn = false;
+                newState.clientState = "WaitingInRoom";
+              }
               if (errorToShow?.includes("game already started")) {
                 newState.clientState = "GameOver";
               }
