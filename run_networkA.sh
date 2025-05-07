@@ -50,6 +50,7 @@ docker exec -it $CONTAINER_NAME /bin/bash -c "
   make &&
   cd /root/OnlineOthello/server &&
   make &&
+  cd /root/OnlineOthello &&
   echo 'Setup complete. Entering container shell...' &&
   exec /bin/bash
 "
