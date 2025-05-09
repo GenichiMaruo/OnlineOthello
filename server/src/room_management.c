@@ -1,5 +1,7 @@
 #include "room_management.h"
 
+#include <stdio.h>  // snprintf のため
+
 #include "client_management.h"  // クライアント情報更新のため必要
 
 // --- グローバル変数定義 ---
@@ -25,6 +27,10 @@ void initialize_rooms() {
         rooms[i].player1_rematch_agree = 0;
         rooms[i].player2_rematch_agree = 0;
         rooms[i].last_action_time = 0;
+
+        rooms[i].chat_history_count = 0;
+        rooms[i].chat_history_next_idx = 0;
+        memset(rooms[i].chat_history, 0, sizeof(rooms[i].chat_history));
     }
     pthread_mutex_unlock(&rooms_mutex);
     printf("Room list initialized.\n");
@@ -95,6 +101,10 @@ int create_new_room(int client_sock, const char* roomName) {
     // ゲーム状態の初期化 (空っぽの状態)
     memset(&rooms[room_idx].gameState, 0, sizeof(GameState));
     rooms[room_idx].gameState.currentTurn = 0;  // まだ始まっていない
+    rooms[room_idx].chat_history_count = 0;
+    rooms[room_idx].chat_history_next_idx = 0;
+    memset(rooms[room_idx].chat_history, 0,
+           sizeof(rooms[room_idx].chat_history));
 
     // 部屋リスト全体のロックを解除 (部屋固有ロックは保持)
     pthread_mutex_unlock(&rooms_mutex);
@@ -147,73 +157,244 @@ int join_room(int client_sock, int targetRoomId) {
         return -1;  // 部屋が見つからない
     }
 
+    Room* current_room = &rooms[room_idx];
+    printf("Client sockfd %d is trying to join room %d\n", client_sock,
+           targetRoomId);
     // 部屋固有のミューテックスをロック (リストロック中に取得)
-    pthread_mutex_lock(&rooms[room_idx].room_mutex);
-    // 部屋リスト全体のロックを解除 (部屋固有ロックは保持)
-    pthread_mutex_unlock(&rooms_mutex);
+    pthread_mutex_lock(&current_room->room_mutex);
+    pthread_mutex_unlock(&rooms_mutex);  // rooms_mutex は解放
 
-    if (rooms[room_idx].status != ROOM_WAITING) {
-        pthread_mutex_unlock(&rooms[room_idx].room_mutex);
-        printf(
-            "Client sockfd %d failed to join room %d (not waiting, status: "
-            "%d)\n",
-            client_sock, targetRoomId, rooms[room_idx].status);
-        if (rooms[room_idx].status == ROOM_PLAYING ||
-            rooms[room_idx].status == ROOM_GAMEOVER ||
-            rooms[room_idx].status == ROOM_REMATCHING) {
-            return -2;  // 満員またはプレイ中
-        } else {
-            return -3;  // その他のエラー状態
-        }
+    if (current_room->status != ROOM_WAITING) {
+        pthread_mutex_unlock(&current_room->room_mutex);
+        fprintf(stderr,
+                "Client sockfd %d failed to join room %d (not waiting, status: "
+                "%d)\n",
+                client_sock, targetRoomId, current_room->status);
+        return (current_room->status == ROOM_PLAYING ||
+                current_room->status == ROOM_GAMEOVER ||
+                current_room->status == ROOM_REMATCHING)
+                   ? -2
+                   : -3;
     }
 
     // プレイヤー2として参加
-    rooms[room_idx].player2_sock = client_sock;
-    // status はまだ WAITING のままにし、StartGame で PLAYING
-    // に変える方が自然かも または、ここで PLAYING にして、StartGame
-    // は状態確認のみにするか ここでは StartGame
-    // を待つことにする（WAITINGのまま） rooms[room_idx].status = ROOM_PLAYING;
-    // // ← handle_start_game_request で行う
-    rooms[room_idx].last_action_time = time(NULL);
+    current_room->player2_sock = client_sock;
+    current_room->last_action_time = time(NULL);
 
     // クライアント情報にも部屋IDと色を記録
     pthread_mutex_lock(&clients_mutex);
     int client_idx = find_client_index(client_sock);
     if (client_idx != -1) {
-        clients[client_idx].roomId = rooms[room_idx].roomId;
-        clients[client_idx].playerColor = 2;  // 参加者は白（後手）とする (仮)
+        clients[client_idx].roomId = current_room->roomId;
+        clients[client_idx].playerColor = 2;
     } else {
-        // クライアントが見つからないエラー
         fprintf(stderr,
                 "Error: Client sockfd %d not found when joining room %d.\n",
                 client_sock, targetRoomId);
         pthread_mutex_unlock(&clients_mutex);
-        // エラー処理：プレイヤー2の情報をリセット
-        rooms[room_idx].player2_sock = -1;
-        pthread_mutex_unlock(&rooms[room_idx].room_mutex);
-        return -1;  // エラー
+        current_room->player2_sock = -1;  // ロールバック
+        pthread_mutex_unlock(&current_room->room_mutex);
+        return -1;
+    }
+    pthread_mutex_unlock(&clients_mutex);
+    // --- 参加者にチャット履歴を送信 & 相手に参加を通知 ---
+    // 必要な情報を room_mutex ロック中に取得し、アンロック後に送信
+    ChatMessageEntry history_copy[MAX_CHAT_HISTORY];
+    int history_count_copy = 0;
+    int p1_sock_to_notify =
+        current_room->player1_sock;  // player1_sock もコピー
+
+    // チャット履歴をコピー (リングバッファ対応)
+    if (current_room->chat_history_count > 0) {
+        history_count_copy = current_room->chat_history_count;
+        int start_idx = (current_room->chat_history_next_idx -
+                         current_room->chat_history_count + MAX_CHAT_HISTORY) %
+                        MAX_CHAT_HISTORY;
+        for (int i = 0; i < history_count_copy; ++i) {
+            history_copy[i] =
+                current_room->chat_history[(start_idx + i) % MAX_CHAT_HISTORY];
+        }
+    }
+
+    // 部屋固有のミューテックスをアンロックしてから通知と履歴送信
+    pthread_mutex_unlock(&current_room->room_mutex);
+
+    // 相手プレイヤー(Player 1)に参加を通知
+    if (p1_sock_to_notify != -1) {
+        Message notify_msg;
+        notify_msg.type = MSG_PLAYER_JOINED_NOTICE;
+        notify_msg.data.playerJoinedNotice.roomId = targetRoomId;
+        sendMessage(p1_sock_to_notify, &notify_msg);
+        printf(
+            "Notified player 1 (sockfd %d) about player 2 joining room %d.\n",
+            p1_sock_to_notify, targetRoomId);
+    }
+
+    // 新規参加者 (client_sock) にチャット履歴を送信
+    if (history_count_copy > 0) {
+        printf(
+            "Sending %d chat history messages to client sockfd %d in room "
+            "%d.\n",
+            history_count_copy, client_sock, targetRoomId);
+        for (int i = 0; i < history_count_copy; ++i) {
+            Message chat_notice_msg;
+            chat_notice_msg.type = MSG_CHAT_MESSAGE_BROADCAST_NOTICE;
+            ChatMessageBroadcastNoticeData* notice_data =
+                &chat_notice_msg.data.chatMessageBroadcastNotice;
+
+            notice_data->roomId = targetRoomId;
+            notice_data->timestamp = history_copy[i].timestamp;
+            strncpy(notice_data->message_text, history_copy[i].message,
+                    MAX_CHAT_MESSAGE_LEN - 1);
+            notice_data->message_text[MAX_CHAT_MESSAGE_LEN - 1] = '\0';
+
+            pthread_mutex_lock(&clients_mutex);
+            int sender_c_idx = find_client_index(history_copy[i].sender_sock);
+            if (sender_c_idx != -1) {
+                notice_data->sender_player_color =
+                    clients[sender_c_idx].playerColor;
+                if (clients[sender_c_idx].playerColor == 1) {
+                    snprintf(notice_data->sender_display_name,
+                             MAX_ROOM_NAME_LEN, "Player 1");
+                } else if (clients[sender_c_idx].playerColor == 2) {
+                    snprintf(notice_data->sender_display_name,
+                             MAX_ROOM_NAME_LEN, "Player 2");
+                } else {  // 念のため
+                    snprintf(notice_data->sender_display_name,
+                             MAX_ROOM_NAME_LEN, "User %d",
+                             history_copy[i].sender_sock);
+                }
+            } else {
+                notice_data->sender_player_color = 0;  // Unknown
+                snprintf(notice_data->sender_display_name, MAX_ROOM_NAME_LEN,
+                         "Past User");
+            }
+            pthread_mutex_unlock(&clients_mutex);
+
+            if (sendMessage(client_sock, &chat_notice_msg) == -1) {
+                fprintf(
+                    stderr,
+                    "Error sending chat history message to client sockfd %d\n",
+                    client_sock);
+                break;  // エラー発生時は以降の送信を中止
+            }
+        }
+    }
+    return targetRoomId;  // 成功
+}
+
+static void process_and_broadcast_chat_message(int roomId, int sender_sock,
+                                               const char* message_text) {
+    pthread_mutex_lock(&rooms_mutex);
+    int room_idx = find_room_index(roomId);
+    if (room_idx == -1) {
+        pthread_mutex_unlock(&rooms_mutex);
+        fprintf(stderr,
+                "Error: Room %d not found for chat message from sock %d.\n",
+                roomId, sender_sock);
+        // TODO: 送信者にエラーを返すか検討
+        return;
+    }
+
+    Room* room = &rooms[room_idx];
+    pthread_mutex_lock(&room->room_mutex);
+    pthread_mutex_unlock(&rooms_mutex);  // rooms_mutex は解放
+
+    // 1. チャット履歴に追加 (リングバッファ)
+    ChatMessageEntry* new_entry =
+        &room->chat_history[room->chat_history_next_idx];
+    new_entry->sender_sock = sender_sock;
+    strncpy(new_entry->message, message_text, MAX_CHAT_MESSAGE_LEN - 1);
+    new_entry->message[MAX_CHAT_MESSAGE_LEN - 1] = '\0';
+    new_entry->timestamp = time(NULL);
+
+    room->chat_history_next_idx =
+        (room->chat_history_next_idx + 1) % MAX_CHAT_HISTORY;
+    if (room->chat_history_count < MAX_CHAT_HISTORY) {
+        room->chat_history_count++;
+    }
+
+    // 2. ブロードキャスト用のメッセージ作成
+    Message chat_notice_msg;
+    chat_notice_msg.type = MSG_CHAT_MESSAGE_BROADCAST_NOTICE;
+    ChatMessageBroadcastNoticeData* notice_data =
+        &chat_notice_msg.data.chatMessageBroadcastNotice;
+
+    notice_data->roomId = roomId;
+    notice_data->timestamp = new_entry->timestamp;
+    strncpy(notice_data->message_text, new_entry->message,
+            MAX_CHAT_MESSAGE_LEN);  // 既にNULL終端されているはず
+
+    pthread_mutex_lock(&clients_mutex);
+    int sender_c_idx = find_client_index(sender_sock);
+    if (sender_c_idx != -1) {
+        notice_data->sender_player_color = clients[sender_c_idx].playerColor;
+        if (clients[sender_c_idx].playerColor == 1) {
+            snprintf(notice_data->sender_display_name, MAX_ROOM_NAME_LEN,
+                     "Player 1");
+        } else if (clients[sender_c_idx].playerColor == 2) {
+            snprintf(notice_data->sender_display_name, MAX_ROOM_NAME_LEN,
+                     "Player 2");
+        } else {
+            snprintf(notice_data->sender_display_name, MAX_ROOM_NAME_LEN,
+                     "User %d", sender_sock);
+        }
+    } else {  // 接続が切れた直後など、クライアントリストにない場合
+        notice_data->sender_player_color = 0;  // Unknown
+        snprintf(notice_data->sender_display_name, MAX_ROOM_NAME_LEN, "User %d",
+                 sender_sock);  // SockFDでフォールバック
     }
     pthread_mutex_unlock(&clients_mutex);
 
-    printf("Client sockfd %d joined room %d as player 2.\n", client_sock,
-           targetRoomId);
+    // 3. ルームメンバーにブロードキャスト (送信者自身にも送る)
+    int p1_sock = room->player1_sock;
+    int p2_sock = room->player2_sock;
 
-    // 相手プレイヤー(Player 1)に参加を通知
-    Message notify_msg;
-    notify_msg.type = MSG_PLAYER_JOINED_NOTICE;
-    notify_msg.data.playerJoinedNotice.roomId = targetRoomId;
-    // 必要なら参加者の情報も追加
-    if (rooms[room_idx].player1_sock != -1) {
-        sendMessage(rooms[room_idx].player1_sock, &notify_msg);
-        printf(
-            "Notified player 1 (sockfd %d) about player 2 joining room %d.\n",
-            rooms[room_idx].player1_sock, targetRoomId);
+    pthread_mutex_unlock(&room->room_mutex);  // sendMessage の前にアンロック
+
+    if (p1_sock != -1) {
+        if (sendMessage(p1_sock, &chat_notice_msg) == -1) {
+            fprintf(stderr,
+                    "Error sending chat broadcast to player 1 (sock %d) in "
+                    "room %d.\n",
+                    p1_sock, roomId);
+        }
+    }
+    if (p2_sock != -1) {
+        if (sendMessage(p2_sock, &chat_notice_msg) == -1) {
+            fprintf(stderr,
+                    "Error sending chat broadcast to player 2 (sock %d) in "
+                    "room %d.\n",
+                    p2_sock, roomId);
+        }
+    }
+    printf("Chat from sock %d in room %d ('%s') broadcasted.\n", sender_sock,
+           roomId, message_text);
+}
+
+// クライアントからのチャットメッセージ要求を処理
+void handle_chat_message(int client_sock, int roomId,
+                         const char* message_text) {
+    // 入力基本的なチェック
+    if (message_text == NULL || strlen(message_text) == 0) {
+        fprintf(stderr,
+                "Received empty chat message from sock %d for room %d.\n",
+                client_sock, roomId);
+        return;
+    }
+    // メッセージ長チェックは sendMessage
+    // やプロトコルレベルで行われる想定だが、ここでも軽くチェック
+    if (strlen(message_text) >= MAX_CHAT_MESSAGE_LEN) {
+        fprintf(stderr,
+                "Chat message from sock %d for room %d is too long (max %d, "
+                "got %zu).\n",
+                client_sock, roomId, MAX_CHAT_MESSAGE_LEN,
+                strlen(message_text));
+        // メッセージを切り詰めるか、エラーを返す。ここでは何もしない。
     }
 
-    pthread_mutex_unlock(
-        &rooms[room_idx].room_mutex);  // 部屋固有のミューテックスをアンロック
-
-    return targetRoomId;  // 成功
+    // 実際の処理は process_and_broadcast_chat_message に委譲
+    process_and_broadcast_chat_message(roomId, client_sock, message_text);
 }
 
 // 部屋の全員にメッセージ送信 (exclude_sockを除く)
