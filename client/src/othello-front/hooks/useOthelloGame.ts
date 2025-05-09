@@ -13,6 +13,27 @@ interface CEvent {
   level?: string; // log
   winner?: number; // gameOver
   result?: string; // rematchResult
+  payload?: ChatMessagePayload; // chatMessage
+}
+
+// --- チャットメッセージペイロード ---
+interface ChatMessagePayload {
+  roomId: number;
+  senderColor: number; // 0: System, 1: Player1 (Black), 2: Player2 (White)
+  senderDisplayName: string;
+  message: string;
+  timestamp: number; // Unix timestamp (seconds)
+}
+
+// --- UIで表示するチャットメッセージの型 ---
+export interface ChatMessage {
+  id: string; // 表示用のユニークID (timestamp + sender + messageの一部など)
+  roomId: number;
+  senderColor: number;
+  senderDisplayName: string;
+  message: string;
+  timestamp: number;
+  isMine: boolean; // 自分が送信したメッセージかどうか
 }
 
 // フックの状態
@@ -28,6 +49,7 @@ interface GameState {
   isMyTurn: boolean;
   isGameOver: boolean;
   rematchOffered: boolean;
+  chatMessages: ChatMessage[]; // チャットメッセージの配列
 }
 
 const WS_URL = "ws://localhost:8080"; // ミドルウェアのWebSocket URL
@@ -50,6 +72,7 @@ export const useOthelloGame = () => {
     isMyTurn: false,
     isGameOver: false,
     rematchOffered: false,
+    chatMessages: [], // 初期状態では空の配列
   });
   const ws = useRef<WebSocket | null>(null);
 
@@ -69,6 +92,7 @@ export const useOthelloGame = () => {
         isConnected: true,
         clientState: "Lobby",
         errorMessage: null,
+        chatMessages: [], // チャットメッセージを初期化
       }));
 
       ws.current?.send(JSON.stringify({ command: "getStatus" })); // 初期状態を取得
@@ -188,6 +212,50 @@ export const useOthelloGame = () => {
                 // newState.clientState = 'WaitingInRoom'; // 開始待ち状態へ
               }
               // stateChange イベントも来る想定なので、ここでは変えない方が良いかも
+              break;
+            case "chatMessage":
+              if (data.payload) {
+                const chatPayload = data.payload as ChatMessagePayload; // 型アサーション
+                // ルームIDが現在のルームと一致する場合のみ追加
+                if (
+                  chatPayload.roomId === newState.roomId ||
+                  chatPayload.roomId === 0
+                ) {
+                  // roomId 0 はシステムメッセージなど
+                  const newChatMessage: ChatMessage = {
+                    id: `${chatPayload.timestamp}-${
+                      chatPayload.senderDisplayName
+                    }-${chatPayload.message.slice(0, 10)}`, // 簡単なID生成
+                    roomId: chatPayload.roomId,
+                    senderColor: chatPayload.senderColor,
+                    senderDisplayName: chatPayload.senderDisplayName,
+                    message: chatPayload.message,
+                    timestamp: chatPayload.timestamp,
+                    // 自分の送信したメッセージかどうかを判定 (myColorとsenderColorで)
+                    // senderColor が 0 (System) の場合は isMine = false
+                    // senderColor が 1 (Black) または 2 (White) の場合に myColor と比較
+                    isMine:
+                      newState.myColor !== null &&
+                      chatPayload.senderColor !== 0 &&
+                      newState.myColor === chatPayload.senderColor,
+                  };
+                  newState.chatMessages = [
+                    ...newState.chatMessages,
+                    newChatMessage,
+                  ].slice(-100); // 最新100件を保持
+                  console.log("Chat message received:", newChatMessage);
+                } else {
+                  console.warn(
+                    "Received chat message for a different room:",
+                    chatPayload
+                  );
+                }
+              } else {
+                console.warn(
+                  "Received chatMessage event without payload:",
+                  data
+                );
+              }
               break;
             case "error":
               errorToShow = data.message ?? "An unknown error occurred.";
@@ -393,6 +461,25 @@ export const useOthelloGame = () => {
     [sendCommand, gameState.roomId]
   );
 
+  const sendChatMessage = useCallback(
+    (message: string) => {
+      if (gameState.roomId !== null && message.trim() !== "") {
+        sendCommand({
+          command: "chat",
+          roomId: gameState.roomId,
+          message: message.trim(),
+        });
+      } else if (gameState.roomId === null) {
+        console.error("Cannot send chat: Not in a room.");
+        setGameState((prev) => ({
+          ...prev,
+          errorMessage: "Cannot send chat: Not in a room.",
+        }));
+      }
+    },
+    [sendCommand, gameState.roomId]
+  );
+
   const quitGame = useCallback(() => {
     sendCommand({ command: "quit" });
     // WebSocket接続も閉じる（サーバー側で閉じるのを待っても良い）
@@ -407,6 +494,7 @@ export const useOthelloGame = () => {
     startGame,
     placePiece,
     sendRematchResponse,
+    sendChatMessage,
     quitGame,
     connectToServer,
   };
