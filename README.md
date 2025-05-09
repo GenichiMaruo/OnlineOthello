@@ -25,35 +25,44 @@
 .\run_networkA.ps1
 ```
 
-## 🚀 起動方法
-
 セットアップスクリプトを実行すると、以下が自動的に行われます：
 
 - 必要な Docker イメージの構築
 - Node.js / npm のインストール
 - `npm install` による依存関係のインストール
-- C言語アプリケーションのコンパイル
+- `npm run build` によるフロントエンドのビルド
+- C言語アプリケーションのコンパイル（`client_app`, `server_app`）
 
-実行ファイル：
+## 🚀 起動方法
 
-- クライアントアプリ：`client_app`
-- サーバーアプリ：`server_app`
+### クライアント（フロントエンド）の起動
 
-どちらも `/root/OnlineOthello/` に配置されています。
+1. コンテナ内で以下のコマンドを実行してください：
 
-```bash
-# コンテナ内で
-./client_app
-# または
-./server_app
-```
+    ```bash
+    cd /root/OnlineOthello/client/src/othello-front/
+    npm run start
+    ```
+
+2. 起動後、ホストマシンのブラウザから以下にアクセスしてください：
+
+    <http://localhost:3000> → Othello をプレイできます。
+
+### サーバーアプリの起動
+
+1. コンテナ内で以下のコマンドを実行してください：
+
+    ```bash
+    cd /root/OnlineOthello/server/
+    ./server_app.out
+    ```
 
 ## 🔁 再コンパイルしたいとき
 
-コンテナ内で次のスクリプトを実行することで、アプリの再コンパイルが可能です。
+Cアプリケーションを変更した場合は、コンテナ内で次のスクリプトを実行することで再コンパイルできます：
 
 ```bash
-/root/OnlineOthello/build_apps.sh
+source build_apps.sh
 ```
 
 ## 📁 ディレクトリ構成（抜粋）
@@ -67,6 +76,7 @@ OnlineOthello/
 ├── server/
 │   └── src/
 │       └── server_app.c     # C server source
+├── Dockerfile               # Docker settings
 ├── build_apps.sh            # 再コンパイル用スクリプト
 ├── run_networkA.sh          # Unix系起動スクリプト
 ├── run_networkA.ps1         # Windows用起動スクリプト
@@ -76,3 +86,23 @@ OnlineOthello/
 
 - Docker Desktop がインストールされていること
 - ```run_networkA.sh``` または ```run_networkA.ps1``` が実行可能であること
+
+## ⚠️ PowerShell スクリプトが実行できない場合の対処法（Windows）
+
+`run_networkA.ps1` を実行しようとしたときにエラーが出る場合、スクリプト実行ポリシーの制限が原因であることがあります。
+
+### ✅ 方法：一時的に実行ポリシーを変更する
+
+PowerShell を「管理者として実行」し、以下のコマンドを入力してください：
+
+```ps
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+その後、プロジェクトのルートディレクトリで以下を実行します：
+
+```ps
+.\run_networkA.ps1
+```
+
+この方法は **現在の PowerShell セッションでのみ有効** です（PC全体の設定を変更しないため安全です）。
