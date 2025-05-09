@@ -4,6 +4,7 @@
 #define PROTOCOL_H
 
 #include <stdint.h>  // For fixed-width integers like uint8_t
+#include <time.h>    // For time_t
 
 #define BOARD_SIZE 8
 #define MAX_ROOM_NAME_LEN 32
@@ -18,6 +19,7 @@ typedef enum {
     MSG_START_GAME_REQUEST,
     MSG_PLACE_PIECE_REQUEST,
     MSG_REMATCH_REQUEST,
+    MSG_CHAT_MESSAGE_SEND_REQUEST,
 
     // Server -> Client Responses/Notifications
     MSG_CREATE_ROOM_RESPONSE,
@@ -33,11 +35,7 @@ typedef enum {
     MSG_REMATCH_RESULT_NOTICE,
     MSG_ROOM_CLOSED_NOTICE,
     MSG_ERROR_NOTICE,
-
-    // Common (Optional)
-    MSG_PING,
-    MSG_PONG
-
+    MSG_CHAT_MESSAGE_BROADCAST_NOTICE
 } MessageType;
 
 // --- データペイロード定義 ---
@@ -141,6 +139,21 @@ typedef struct {
     char reason[MAX_MESSAGE_LEN];
 } RoomClosedNoticeData;
 
+// チャットメッセージ送信要求 (Client -> Server)
+typedef struct {
+    int roomId;
+    char message_text[256];
+} ChatMessageSendRequestData;
+
+// チャットメッセージ受信通知 (Server -> Client)
+typedef struct {
+    int roomId;
+    int sender_player_color;  // 0: システム, 1: プレイヤー1, 2: プレイヤー2
+    char sender_display_name[MAX_ROOM_NAME_LEN];
+    char message_text[256];
+    time_t timestamp;
+} ChatMessageBroadcastNoticeData;
+
 // エラー通知 (Server -> Client)
 typedef struct {
     char message[MAX_MESSAGE_LEN];
@@ -167,6 +180,8 @@ typedef struct {
         RematchOfferNoticeData rematchOfferNotice;
         RematchResultNoticeData rematchResultNotice;
         RoomClosedNoticeData roomClosedNotice;
+        ChatMessageSendRequestData chatMessageSendReq;
+        ChatMessageBroadcastNoticeData chatMessageBroadcastNotice;
         ErrorNoticeData errorNotice;
     } data;
 } Message;
