@@ -2,12 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { spawn, ChildProcessWithoutNullStreams } from "child_process";
 import path from "path";
 
-const C_CLIENT_EXECUTABLE = path.join(
-  __dirname,
-  "bin",
-  "../../../..",
-  "client_app.out"
-); // Cクライアントの実行ファイルパス
+const C_CLIENT_EXECUTABLE = path.join(__dirname, "bin", "client_app.out"); // Cクライアントの実行ファイルパス
 const WS_PORT = 8080; // WebSocketサーバーのポート
 
 let cProcess: ChildProcessWithoutNullStreams | null = null;

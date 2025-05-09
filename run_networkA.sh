@@ -48,6 +48,8 @@ docker exec -it $CONTAINER_NAME /bin/bash -c "
   npm i &&
   cd /root/OnlineOthello/client &&
   make &&
+  cd /root/OnlineOthello/client/src/othello-front &&
+  npm run build &&
   cd /root/OnlineOthello/server &&
   make &&
   cd /root/OnlineOthello &&

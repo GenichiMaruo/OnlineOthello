@@ -20,6 +20,10 @@
 #define SERVER_PORT 10000       // サーバーポート番号
 #define REMATCH_TIMEOUT_SEC 30  // 再戦受付時間（秒）
 
+// --- チャット機能用定数 ---
+#define MAX_CHAT_MESSAGE_LEN 256  // チャットメッセージ本文の最大長
+#define MAX_CHAT_HISTORY 100      // 1部屋あたりに保存するチャット履歴の最大件数
+
 // --- データ構造定義 ---
 
 // クライアント情報
@@ -48,6 +52,15 @@ typedef enum {
     ROOM_REMATCHING  // 再戦同意待ち
 } RoomStatus;
 
+// チャットメッセージ履歴用構造体
+typedef struct {
+    int sender_sock;  // 送信者のソケットディスクリプタ
+                      // (特定用、表示名は別途解決)
+    // int sender_player_color; //必要なら追加
+    char message[MAX_CHAT_MESSAGE_LEN];
+    time_t timestamp;
+} ChatMessageEntry;
+
 // 部屋情報
 typedef struct {
     int roomId;
@@ -60,7 +73,10 @@ typedef struct {
     time_t last_action_time;     // タイムアウト処理用
     int player1_rematch_agree;   // 0:未返答, 1:Yes, 2:No
     int player2_rematch_agree;   // 0:未返答, 1:Yes, 2:No
-    // タイマー用変数など
+
+    ChatMessageEntry chat_history[MAX_CHAT_HISTORY];  // リングバッファ
+    int chat_history_count;     // 現在保存されている有効な履歴の件数
+    int chat_history_next_idx;  // 次に書き込む chat_history 配列のインデックス
 } Room;
 
 #endif  // SERVER_COMMON_H

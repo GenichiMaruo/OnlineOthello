@@ -4,9 +4,8 @@
 #include "network.h"
 #include "state.h"
 
-// --- サーバーからのメッセージ受信スレッド (変更なし) ---
+// --- サーバーからのメッセージ受信スレッド ---
 void* receive_handler(void* arg) {
-    // ... (内容は変更なし) ...
     Message msg;
     int read_size;
     int current_sockfd = get_sockfd();  // スレッド開始時の sockfd を取得
@@ -41,18 +40,11 @@ void* receive_handler(void* arg) {
                 send_state_change_event_unsafe();  // JSON出力 (ロック中)
             }
             pthread_mutex_unlock(get_state_mutex());
-
-            // 接続を閉じる (既に閉じているかもしれないが念のため)
-            // close_connection(); // ここで呼ぶとデッドロックの可能性?
-            // cleanupに任せる
-
             break;  // ループを抜けてスレッド終了
         }
 
         // 受信したメッセージを処理
         process_server_message(&msg);
-
-        // UI更新トリガーは process_server_message 内で行う
     }
 
     send_log_event(LOG_INFO, "Receiver thread finished.");
@@ -65,13 +57,12 @@ void process_server_message(const Message* msg) {
 
     ClientState current = get_client_state_unsafe();
     int current_room_id = get_my_room_id_unsafe();
-    uint8_t current_my_color = get_my_color_unsafe();  // <<< この変数を後で使用
+    uint8_t current_my_color = get_my_color_unsafe();
 
     // send_log_event_unsafe(LOG_DEBUG, "Processing server msg type %d",
     // msg->type);
 
     switch (msg->type) {
-        // ...(他の case は変更なし)...
         case MSG_CREATE_ROOM_RESPONSE:
             if (current == STATE_CREATING_ROOM) {
                 if (msg->data.createRoomResp.success) {
@@ -300,7 +291,51 @@ void process_server_message(const Message* msg) {
                 }
             }
             break;
+        case MSG_CHAT_MESSAGE_BROADCAST_NOTICE:
+            // ルームIDが一致するか、またはシステムメッセージ等でroomId=0の場合などを考慮
+            // (サーバー側で適切に送信先をフィルタリングしている前提なら、current_room_idのみでチェックしても良い)
+            if (msg->data.chatMessageBroadcastNotice.roomId ==
+                    current_room_id ||
+                msg->data.chatMessageBroadcastNotice.roomId ==
+                    0) {  // roomId 0
+                          // はシステムメッセージ等、特定のルームに属さない場合を想定
 
+                send_chat_message_received_event_unsafe(
+                    msg->data.chatMessageBroadcastNotice.roomId,
+                    msg->data.chatMessageBroadcastNotice.sender_player_color,
+                    msg->data.chatMessageBroadcastNotice.sender_display_name,
+                    msg->data.chatMessageBroadcastNotice.message_text,
+                    msg->data.chatMessageBroadcastNotice.timestamp);
+
+                // デバッグ用にログにも出力
+                char time_buffer[26];
+                struct tm* tm_info;
+                time_t raw_time =
+                    msg->data.chatMessageBroadcastNotice.timestamp;
+                tm_info = localtime(&raw_time);
+                strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d %H:%M:%S",
+                         tm_info);
+
+                send_log_event_unsafe(
+                    LOG_INFO, "[Room %d Chat][%s] <%s (Color:%d)>: %s",
+                    msg->data.chatMessageBroadcastNotice.roomId, time_buffer,
+                    msg->data.chatMessageBroadcastNotice.sender_display_name,
+                    msg->data.chatMessageBroadcastNotice.sender_player_color,
+                    msg->data.chatMessageBroadcastNotice.message_text);
+
+            } else if (
+                current_room_id !=
+                -1) {  // 自分がルームに入っているのに、違うルームのチャットが来た場合
+                send_log_event_unsafe(
+                    LOG_WARN,
+                    "Received chat message for room %d, but client is in room "
+                    "%d. Ignoring.",
+                    msg->data.chatMessageBroadcastNotice.roomId,
+                    current_room_id);
+            }
+            // 自分がどのルームにもいない場合(current_room_id ==
+            // -1)、特定のルーム宛のチャットは無視される
+            break;
         case MSG_ROOM_CLOSED_NOTICE:
             if (msg->data.roomClosedNotice.roomId == current_room_id) {
                 send_server_message_event_unsafe(

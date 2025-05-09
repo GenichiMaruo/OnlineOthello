@@ -783,6 +783,14 @@ void* handle_client(void* arg) {
             case MSG_REMATCH_REQUEST:
                 handle_rematch_request(client_sock, &msg);
                 break;
+            case MSG_CHAT_MESSAGE_SEND_REQUEST:
+                ChatMessageSendRequestData* req_data =
+                    &msg.data.chatMessageSendReq;
+                // sender_sock
+                // はメッセージを受信したクライアントのソケットディスクリプタ
+                handle_chat_message(client_sock, req_data->roomId,
+                                    req_data->message_text);
+                break;
             // 他のクライアントからのリクエストタイプもここに追加
             // case MSG_LIST_ROOMS_REQUEST:
             //     handle_list_rooms_request(client_sock, &msg); // 要実装

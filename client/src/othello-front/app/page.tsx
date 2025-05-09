@@ -5,6 +5,7 @@ import { useOthelloGame } from "../hooks/useOthelloGame";
 import Board from "../components/Board";
 import GameInfo from "../components/GameInfo";
 import ControlPanel from "../components/ControlPanel";
+import ChatWindow from "../components/ChatWindow";
 
 export default function Home() {
   const {
@@ -16,6 +17,7 @@ export default function Home() {
     sendRematchResponse,
     quitGame,
     connectToServer,
+    sendChatMessage,
   } = useOthelloGame();
 
   // 操作不能にする状態かを判定 (isDisabled の定義は変更なし)
@@ -56,14 +58,12 @@ export default function Home() {
         Othello Game
       </h1>
 
-      {/* ゲームエリア全体を囲むコンテナ */}
-      <div className="flex flex-col lg:flex-row gap-6 w-full max-w-5xl">
+      {/* ゲームエリア全体を囲むコンテナ: 盤面とチャットウィンドウを横並びにする */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,_1fr)_minmax(auto,_1.5fr)_minmax(280px,_1fr)] gap-6 w-full max-w-screen-2xl px-4">
         {" "}
-        {/* 横幅を広げる max-w-5xl */}
-        {/* 左側: 情報とコントロール (小画面では縦積み) */}
-        <div className="flex flex-col gap-4 lg:w-1/3">
-          {" "}
-          {/* lg以上で幅を指定 */}
+        {/* 最大幅を広げる max-w-7xl */}
+        {/* 左側: 情報とコントロール (lg未満では1列、lg以上で1列目) */}
+        <div className="flex flex-col gap-4">
           <GameInfo
             isConnected={gameState.isConnected}
             clientState={gameState.clientState}
@@ -86,18 +86,16 @@ export default function Home() {
             onQuit={quitGame}
             onConnect={(ip, port) => {
               console.log("Connect to server", ip, port);
-              connectToServer(ip, port); // 実装済み関数
+              connectToServer(ip, port);
             }}
           />
         </div>
-        {/* 右側: 盤面エリア (ゲームがアクティブな場合) */}
-        <div className="flex-1 flex flex-col items-center justify-center lg:w-2/3">
-          {" "}
-          {/* 残りの幅を使う */}
+        {/* 中央: 盤面エリア (lg未満では次の行、lg以上で2列目) */}
+        <div className="flex flex-col items-center justify-start">
           {isGameActive ? (
-            <div className="w-full max-w-lg">
+            <div className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl aspect-square">
               {" "}
-              {/* 盤面の最大幅を設定 (例: max-w-lg) */}
+              {/* アスペクト比を維持 */}
               <Board
                 board={gameState.board}
                 myColor={gameState.myColor}
@@ -107,19 +105,27 @@ export default function Home() {
               />
             </div>
           ) : (
-            // ゲームが始まっていない場合のメッセージ
-            <div className="flex items-center justify-center h-64 bg-gray-200 dark:bg-gray-800 rounded-lg w-full max-w-lg">
+            <div className="flex items-center justify-center bg-gray-200 dark:bg-gray-800 rounded-lg w-full max-w-xl md:max-w-2xl lg:max-w-3xl aspect-square">
               {gameState.isConnected && gameState.clientState === "Lobby" ? (
                 <p className="text-muted-foreground">
                   Create or join a room to start playing.
                 </p>
               ) : gameState.isConnected ? (
-                <p className="text-muted-foreground">Waiting for game...</p> // 接続中など
+                <p className="text-muted-foreground">Waiting for game...</p>
               ) : (
                 <p className="text-muted-foreground">Connecting to server...</p>
               )}
             </div>
           )}
+        </div>
+        {/* 右側: チャットウィンドウ (lg未満では次の行、lg以上で3列目) */}
+        <div className="flex flex-col h-[400px] sm:h-[500px] lg:h-[600px] max-h-full">
+          <ChatWindow
+            messages={gameState.chatMessages}
+            onSendMessage={sendChatMessage}
+            roomId={gameState.roomId}
+            currentClientState={gameState.clientState}
+          />
         </div>
       </div>
     </div>

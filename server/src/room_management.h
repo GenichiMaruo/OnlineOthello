@@ -10,15 +10,15 @@ extern int room_id_counter;
 
 // --- 関数プロトタイプ ---
 void initialize_rooms();
-int find_room_index(
-    int roomId);              // roomIdからインデックスを探すヘルパー関数(追加)
-int find_empty_room_index();  // 空き部屋のインデックスを探すヘルパー関数(名前変更)
+int find_room_index(int roomId);
+int find_empty_room_index();
 int create_new_room(int client_sock, const char* roomName);
 int join_room(int client_sock, int targetRoomId);
 void close_room(int roomId, const char* reason);
 void broadcast_to_room(int roomId, const Message* msg, int exclude_sock);
 int get_opponent_sock(int roomId, int self_sock);
-Room* get_room_by_id(
-    int roomId);  // roomIdからRoomポインタを取得するヘルパー関数 (追加)
+Room* get_room_by_id(int roomId);
+
+void handle_chat_message(int client_sock, int roomId, const char* message_text);
 
 #endif  // ROOM_MANAGEMENT_H

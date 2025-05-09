@@ -87,6 +87,8 @@ static void process_command(const char* json_command) {
     int agree = -1;           // 0 or 1 for boolean
     char serverIp[64] = {0};  // connect 用
     int serverPort = -1;      // connect 用
+    char chatMessage[sizeof(((ChatMessageSendRequestData*)0)->message_text)] = {
+        0};  // chat 用
 
     const char* cmd_ptr = strstr(json_command, "\"command\":\"");
     if (cmd_ptr) {
@@ -154,6 +156,89 @@ static void process_command(const char* json_command) {
             send_error_event("Invalid 'rematch' command: Missing fields.");
             return;
         }
+    } else if (strcmp(command, "chat") == 0) {  // New command: chat
+        const char* id_ptr = strstr(json_command, "\"roomId\":");
+        const char* msg_ptr = strstr(json_command, "\"message\":\"");
+        int chat_target_roomId = -1;
+
+        if (msg_ptr) {
+            // sscanfで読み取る際、バッファサイズ-1を指定して終端ヌル文字のスペースを確保
+            sscanf(msg_ptr + strlen("\"message\":\""), "%255[^\"]",
+                   chatMessage);
+        } else {
+            send_error_event("Invalid 'chat' command: Missing 'message'.");
+            return;
+        }
+        if (id_ptr) {
+            sscanf(id_ptr + strlen("\"roomId\":"), "%d", &chat_target_roomId);
+        } else {
+            chat_target_roomId = get_my_room_id();  // 現在のルームIDを使用
+            if (chat_target_roomId == -1) {
+                send_error_event(
+                    "Invalid 'chat' command: Not in a room and roomId not "
+                    "specified.");
+                return;
+            }
+        }
+
+        ClientState current_state_for_chat = get_client_state();
+        int current_room_id_for_chat = get_my_room_id();
+
+        if (current_room_id_for_chat != -1 &&
+            current_room_id_for_chat == chat_target_roomId) {
+            switch (current_state_for_chat) {
+                case STATE_WAITING_IN_ROOM:
+                case STATE_MY_TURN:
+                case STATE_OPPONENT_TURN:
+                case STATE_GAME_OVER:
+                    // 他、チャットを許可したい状態があれば追加
+                    // (例: STATE_STARTING_GAME, STATE_PLACING_PIECE)
+                    {  // case 内で変数を宣言するためにブロックを使用
+                        Message msg;
+                        msg.type = MSG_CHAT_MESSAGE_SEND_REQUEST;
+                        msg.data.chatMessageSendReq.roomId =
+                            current_room_id_for_chat;
+                        strncpy(
+                            msg.data.chatMessageSendReq.message_text,
+                            chatMessage,
+                            sizeof(msg.data.chatMessageSendReq.message_text) -
+                                1);
+                        msg.data.chatMessageSendReq.message_text
+                            [sizeof(msg.data.chatMessageSendReq.message_text) -
+                             1] = '\0';  // 終端保証
+                        if (!send_message_to_server(&msg)) {
+                            send_error_event("Failed to send chat message.");
+                        } else {
+                            send_log_event(
+                                LOG_INFO, "Chat message sent to room %d: %s",
+                                current_room_id_for_chat, chatMessage);
+                            // 自分の送信したメッセージを即時UIに反映させたい場合は、ここで専用のイベントをフロントに送ることもできる。
+                            // 通常はサーバーからのブロードキャストを待つ。
+                        }
+                    }
+                    break;
+                case STATE_CONNECTED:  // ロビーにいる場合
+                    send_error_event(
+                        "Cannot send chat message while in Lobby. Join a room "
+                        "first.");
+                    break;
+                default:
+                    send_error_event(
+                        "Cannot send chat message in current state (%s).",
+                        state_to_string(current_state_for_chat));
+                    break;
+            }
+        } else if (chat_target_roomId == -1 &&
+                   current_room_id_for_chat ==
+                       -1) {  // roomId未指定でルームにもいない
+            send_error_event("Cannot send chat: Not in a room.");
+        } else {  // 指定された roomId が現在のルームと異なる
+            send_error_event(
+                "Cannot send chat to room %d: Not currently in that room "
+                "(current room: %d).",
+                chat_target_roomId, current_room_id_for_chat);
+        }
+        return;  // chat コマンド処理完了
     } else if (strcmp(command, "getStatus") == 0) {
         // 特に処理なし (状態は自動的に更新される)
         send_log_event(LOG_INFO, "Status command received.");
