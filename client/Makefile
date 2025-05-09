@@ -5,15 +5,20 @@ LDFLAGS =
 SRCDIR = ./src
 OBJDIR = obj
 
+OUTFILE = client_app.out
+COPY_TARGETS = ./src/othello-front/middleware/bin ./src/othello-front/dist/middleware/bin
+
 SRCS = $(wildcard $(SRCDIR)/*.c)
 OBJS = $(patsubst $(SRCDIR)/%.c, $(OBJDIR)/%.o, $(SRCS))
 
-all: client_app.out
+.PHONY: all clean copy_targets
 
-client_app.out: $(OBJS)
-	@echo "Linking object files to create client_app.out..."
+all: $(OUTFILE) copy_targets
+
+$(OUTFILE): $(OBJS)
+	@echo "Linking object files to create $(OUTFILE)..."
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-	@echo "Build complete: client_app.out"
+	@echo "Build complete: $(OUTFILE)"
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c
 	@echo "Compiling $<..."
@@ -21,7 +26,15 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 	@echo "Compiled $< to $@"
 
+copy_targets: $(OUTFILE)
+	@echo "Copying $(OUTFILE) to target directories..."
+	@for dir in $(COPY_TARGETS); do \
+		mkdir -p $$dir; \
+		cp -v $(OUTFILE) $$dir/; \
+	done
+	@echo "Copy complete."
+
 clean:
 	@echo "Cleaning up build files..."
-	rm -rf $(OBJDIR) client_app.out
+	rm -rf $(OBJDIR) $(OUTFILE)
 	@echo "Clean complete."
