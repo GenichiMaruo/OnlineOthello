@@ -37,4 +37,7 @@ copy_targets: $(OUTFILE)
 clean:
 	@echo "Cleaning up build files..."
 	rm -rf $(OBJDIR) $(OUTFILE)
+	@for dir in $(COPY_TARGETS); do \
+		rm -f $$dir/$(OUTFILE); \
+	done
 	@echo "Clean complete."
