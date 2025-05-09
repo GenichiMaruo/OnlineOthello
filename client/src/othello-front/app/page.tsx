@@ -59,11 +59,11 @@ export default function Home() {
       </h1>
 
       {/* ゲームエリア全体を囲むコンテナ: 盤面とチャットウィンドウを横並びにする */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full max-w-7xl">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,_1fr)_minmax(auto,_1.5fr)_minmax(280px,_1fr)] gap-6 w-full max-w-screen-2xl px-4">
         {" "}
         {/* 最大幅を広げる max-w-7xl */}
         {/* 左側: 情報とコントロール (lg未満では1列、lg以上で1列目) */}
-        <div className="lg:col-span-1 flex flex-col gap-4">
+        <div className="flex flex-col gap-4">
           <GameInfo
             isConnected={gameState.isConnected}
             clientState={gameState.clientState}
@@ -91,9 +91,9 @@ export default function Home() {
           />
         </div>
         {/* 中央: 盤面エリア (lg未満では次の行、lg以上で2列目) */}
-        <div className="lg:col-span-1 flex flex-col items-center justify-center">
+        <div className="flex flex-col items-center justify-start">
           {isGameActive ? (
-            <div className="w-full max-w-lg aspect-square">
+            <div className="w-full max-w-xl md:max-w-2xl lg:max-w-3xl aspect-square">
               {" "}
               {/* アスペクト比を維持 */}
               <Board
@@ -105,7 +105,7 @@ export default function Home() {
               />
             </div>
           ) : (
-            <div className="flex items-center justify-center h-64 sm:h-80 md:h-96 lg:aspect-square lg:h-auto bg-gray-200 dark:bg-gray-800 rounded-lg w-full max-w-lg">
+            <div className="flex items-center justify-center bg-gray-200 dark:bg-gray-800 rounded-lg w-full max-w-xl md:max-w-2xl lg:max-w-3xl aspect-square">
               {gameState.isConnected && gameState.clientState === "Lobby" ? (
                 <p className="text-muted-foreground">
                   Create or join a room to start playing.
@@ -119,7 +119,7 @@ export default function Home() {
           )}
         </div>
         {/* 右側: チャットウィンドウ (lg未満では次の行、lg以上で3列目) */}
-        <div className="lg:col-span-1">
+        <div className="flex flex-col h-[400px] sm:h-[500px] lg:h-[600px] max-h-full">
           <ChatWindow
             messages={gameState.chatMessages}
             onSendMessage={sendChatMessage}

@@ -68,31 +68,37 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-[300px] sm:h-[400px] lg:h-full border rounded-lg bg-gray-50 dark:bg-gray-800">
-      {" "}
-      {/* 高さを調整 */}
+    <div className="flex flex-col h-full border rounded-lg bg-gray-50 dark:bg-gray-800">
       <div className="p-3 border-b dark:border-gray-700">
         <h2 className="text-lg font-semibold">
           {roomId !== null ? `Room Chat (ID: ${roomId})` : "Chat"}
         </h2>
       </div>
-      <ScrollArea className="flex-grow p-2" ref={scrollAreaRef}>
-        {messages.length === 0 && !isChatDisabled && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-muted-foreground">No messages yet.</p>
+
+      <div className="flex-grow overflow-hidden">
+        <ScrollArea className="h-full px-2" ref={scrollAreaRef}>
+          <div className="flex flex-col gap-2 pb-4">
+            {messages.length === 0 && !isChatDisabled && (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-sm text-muted-foreground">
+                  No messages yet.
+                </p>
+              </div>
+            )}
+            {messages.map((msg) => (
+              <ChatMessageItem key={msg.id} message={msg} />
+            ))}
+            {isChatDisabled && roomId === null && (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-sm text-muted-foreground">
+                  Connect to a server and join a room to chat.
+                </p>
+              </div>
+            )}
           </div>
-        )}
-        {messages.map((msg) => (
-          <ChatMessageItem key={msg.id} message={msg} />
-        ))}
-        {isChatDisabled && roomId === null && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-muted-foreground">
-              Connect to a server and join a room to chat.
-            </p>
-          </div>
-        )}
-      </ScrollArea>
+        </ScrollArea>
+      </div>
+
       <form
         onSubmit={handleSubmit}
         className="p-3 border-t dark:border-gray-700 flex gap-2"
