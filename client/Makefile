@@ -38,6 +38,6 @@ clean:
 	@echo "Cleaning up build files..."
 	rm -rf $(OBJDIR) $(OUTFILE)
 	@for dir in $(COPY_TARGETS); do \
-		rm -f $$dir/$(OUTFILE); \
+		rm -rf $$dir; \
 	done
 	@echo "Clean complete."
