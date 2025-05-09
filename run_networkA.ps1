@@ -45,6 +45,8 @@ npm install -g npm@latest && \
 npm i && \
 cd /root/OnlineOthello/client && \
 make && \
+cd /root/OnlineOthello/client/src/othello-front && \
+npm run build && \
 cd /root/OnlineOthello/server && \
 make && \
 cd /root/OnlineOthello && \
