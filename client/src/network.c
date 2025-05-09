@@ -5,10 +5,11 @@
 
 // --- サーバー接続 ---
 int connect_to_server() {
-    struct sockaddr_in server_addr;
+    struct addrinfo hints, *res, *rp;
     int temp_sockfd;
-    char* server_ip = g_server_ip;    // グローバル変数からIPアドレスを取得
-    int server_port = g_server_port;  // グローバル変数からポート番号を取得
+    char* server_ip = g_server_ip;
+    int server_port = g_server_port;
+
     if (server_port <= 0 || server_port > 65535) {
         send_error_event("Invalid server port: %d", server_port);
         return -1;
@@ -16,52 +17,58 @@ int connect_to_server() {
     if (strlen(server_ip) == 0) {
         send_error_event("Invalid server IP address: '%s'", server_ip);
         return -1;
-    } else if (strcmp(server_ip, "localhost") == 0) {
-        strcpy(server_ip, "127.0.0.1");  // localhost
     }
 
-    // ipアドレスを表示
+    // localhostをループバックアドレスに変換
+    if (strcmp(server_ip, "localhost") == 0) {
+        server_ip = "127.0.0.1";
+    }
+
+    // ログ表示
     send_log_event(LOG_INFO, "Connecting to server at %s:%d", server_ip,
-                   server_port);         // ログ通知
-    set_client_state(STATE_CONNECTING);  // 接続試行中状態へ
-    send_state_change_event();           // Node.jsに状態変化を通知
+                   server_port);
+    set_client_state(STATE_CONNECTING);
+    send_state_change_event();
 
-    temp_sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (temp_sockfd < 0) {
-        perror("socket creation failed");
-        send_error_event("Socket creation failed");  // Node.jsにエラー通知
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;        // IPv4のみ
+    hints.ai_socktype = SOCK_STREAM;  // TCP
+
+    char port_str[6];
+    snprintf(port_str, sizeof(port_str), "%d", server_port);
+
+    int ret = getaddrinfo(server_ip, port_str, &hints, &res);
+    if (ret != 0) {
+        send_error_event("getaddrinfo failed: %s", gai_strerror(ret));
         set_client_state(STATE_DISCONNECTED);
         send_state_change_event();
         return -1;
     }
 
-    // (中略 - アドレス設定は同じ)
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(server_port);  // ポート番号を設定
-    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        perror("inet_pton failed");
-        send_error_event("Invalid server IP address");
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        temp_sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (temp_sockfd < 0) continue;
+
+        if (connect(temp_sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
+            break;  // 成功
+        }
+
         close(temp_sockfd);
-        set_client_state(STATE_DISCONNECTED);
-        send_state_change_event();
-        return -1;
     }
 
-    if (connect(temp_sockfd, (struct sockaddr*)&server_addr,
-                sizeof(server_addr)) < 0) {
-        perror("connect failed");
+    freeaddrinfo(res);
+
+    if (rp == NULL) {
         send_error_event("Failed to connect to the server");
-        close(temp_sockfd);
         set_client_state(STATE_DISCONNECTED);
         send_state_change_event();
         return -1;
     }
 
-    send_log_event(LOG_INFO, "Connected to server");  // ログ通知
-    set_sockfd(temp_sockfd);            // 状態モジュールに sockfd を設定
-    set_client_state(STATE_CONNECTED);  // 接続完了状態へ
-    send_state_change_event();          // 状態変化通知
+    send_log_event(LOG_INFO, "Connected to server");
+    set_sockfd(temp_sockfd);
+    set_client_state(STATE_CONNECTED);
+    send_state_change_event();
     return temp_sockfd;
 }
 

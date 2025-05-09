@@ -1,6 +1,8 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#include <netdb.h>
+
 #include "client_common.h"
 
 // --- 関数プロトタイプ ---
