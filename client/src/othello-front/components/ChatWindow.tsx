@@ -2,18 +2,18 @@
 "use client";
 
 import { useState, useRef, useEffect, FormEvent } from "react";
-import { ChatMessage } from "../hooks/useOthelloGame"; // useOthelloGameから型をインポート
+import { ChatMessage } from "../hooks/useOthelloGame";
 import ChatMessageItem from "./ChatMessage";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { PaperPlaneIcon } from "@radix-ui/react-icons"; // 例: 送信アイコン
+import { PaperPlaneIcon } from "@radix-ui/react-icons";
 
 interface ChatWindowProps {
   messages: ChatMessage[];
   onSendMessage: (message: string) => void;
   roomId: number | null;
-  currentClientState: string; // チャットを無効化するために使用
+  currentClientState: string;
 }
 
 const ChatWindow: React.FC<ChatWindowProps> = ({
@@ -23,21 +23,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   currentClientState,
 }) => {
   const [newMessage, setNewMessage] = useState("");
-  const scrollAreaRef = useRef<HTMLDivElement>(null); // ScrollArea内のdiv要素への参照
+  const endOfMessagesRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    // 新しいメッセージが追加されたら一番下までスクロール
-    if (scrollAreaRef.current) {
-      const viewport = scrollAreaRef.current.querySelector(
-        'div[style*="overflow: scroll;"]'
-      );
-      if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight;
-      } else {
-        // Fallback if the specific viewport div is not found (e.g. ScrollArea structure changed)
-        scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
-      }
-    }
+    endOfMessagesRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   const handleSubmit = (e: FormEvent) => {
@@ -53,11 +42,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     currentClientState === "Disconnected" ||
     currentClientState === "Connecting" ||
     currentClientState === "Quitting";
-  // 必要に応じて他の状態でも無効化
 
   if (!isChatDisabled && roomId === null) {
-    // ルームにいないが、チャットウィンドウ自体は表示する場合のプレースホルダー
-    // (このケースは isChatDisabled でカバーされるはずだが念のため)
     return (
       <div className="flex flex-col h-full border rounded-lg bg-gray-50 dark:bg-gray-800 p-4">
         <div className="flex-grow flex items-center justify-center">
@@ -76,7 +62,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       </div>
 
       <div className="flex-grow overflow-hidden">
-        <ScrollArea className="h-full px-2" ref={scrollAreaRef}>
+        <ScrollArea className="h-full px-2">
           <div className="flex flex-col gap-2 pb-4">
             {messages.length === 0 && !isChatDisabled && (
               <div className="flex items-center justify-center h-full">
@@ -95,6 +81,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                 </p>
               </div>
             )}
+            {/* スクロール末尾アンカー */}
+            <div ref={endOfMessagesRef} />
           </div>
         </ScrollArea>
       </div>
