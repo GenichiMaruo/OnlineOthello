@@ -191,6 +191,7 @@ static void process_command(const char* json_command) {
                 case STATE_MY_TURN:
                 case STATE_OPPONENT_TURN:
                 case STATE_GAME_OVER:
+                case STATE_PLACING_PIECE:
                     // 他、チャットを許可したい状態があれば追加
                     // (例: STATE_STARTING_GAME, STATE_PLACING_PIECE)
                     {  // case 内で変数を宣言するためにブロックを使用
