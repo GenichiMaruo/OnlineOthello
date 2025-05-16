@@ -125,27 +125,32 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 以下は OnlineOthello の基本的な操作手順です。各ステップに対応する画面キャプチャも合わせてご確認ください。
 
 1. 起動画面
-    ゲームを起動すると、以下のスタート画面が表示されます。
+
+   ゲームを起動すると、以下のスタート画面が表示されます。
 
     ![Start Screen](./img/start_screen.png)
 
-2. サーバーIPの入力
-    ローカル開発環境のサーバーが稼働状態であれば、localhost を入力して接続します。
+3. サーバーIPの入力
+
+   ローカル開発環境のサーバーが稼働状態であれば、localhost を入力して接続します。
 
     ![Server IP Input](./img/controls1.png)
 
-3. 部屋の作成
-    「Create Room」ボタンを押すことで、新しい部屋を作成できます。
+5. 部屋の作成
+
+   「Create Room」ボタンを押すことで、新しい部屋を作成できます。
 
     ![Create Room](./img/controls2.png)
 
-4. 部屋作成後の操作
-    部屋に入室した後、部屋の作成者だけが「Start Game」ボタンを押せます。
+7. 部屋作成後の操作
+
+   部屋に入室した後、部屋の作成者だけが「Start Game」ボタンを押せます。
 
     ![Room Created](./img/controls3.png)
 
-5. 既存の部屋に入る
-    他のプレイヤーは、部屋番号（例：0）を入力し、「Join Room」ボタンを押すことで部屋に参加できます。
+9. 既存の部屋に入る
+
+   他のプレイヤーは、部屋番号（例：0）を入力し、「Join Room」ボタンを押すことで部屋に参加できます。
 
     ![Join Room](./img/controls4.png)
 
@@ -153,13 +158,15 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ゲーム中にはチャット機能を使って相手プレイヤーと会話できます。
 
-チャットの入力画面
-画面下部にメッセージを入力できます。
+- チャットの入力画面
+
+  画面下部にメッセージを入力できます。
 
 ![Chat Input](./img/chat1.png)
 
-メッセージの送信
-メッセージ（例：test）を送信すると、画面に表示されます。
+- メッセージの送信
+
+  メッセージ（例：test）を送信すると、画面に表示されます。
 
 ![Chat Send](./img/chat2.png)
 
