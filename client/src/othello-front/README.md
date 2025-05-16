@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# OnlineOthello クライアントアプリケーション（クライアント・フロントエンド）
 
-## Getting Started
+このREADMEは、OnlineOthelloのクライアントアプリケーションとフロントエンドの構成要素について説明します。
+フロントエンドはNext.jsで実装されており、C言語で実装されたクライアントアプリケーションと連携して動作します。
+バックエンドの詳細については、以下のリンクを参照してください。
 
-First, run the development server:
+- [OnlineOthello クライアント・バックエンド](../../README.md)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## ミドルウェアサーバー（middleware/server.ts）
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`client/src/othello-front/middleware/server.ts`は、Next.jsフロントエンドとC言語クライアントアプリケーションの間を仲介する**ミドルウェアサーバー**です。  
+フロントエンド実行時に同時に起動され、WebSocket経由でフロントエンドとCクライアントの標準入出力を橋渡しします。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 主な機能
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **Cクライアントの起動・監視**
+  - 指定パスのCクライアント実行ファイル（`client_app.out`）をNode.jsからspawnし、標準入出力を監視
+  - Cクライアントが異常終了した場合は自動で再起動
 
-## Learn More
+- **WebSocketサーバーの提供**
+  - フロントエンド（Next.js）からの接続を受け付け、複数クライアントと同時通信可能
+  - WebSocket経由で受信したコマンドをCクライアントの標準入力に転送
 
-To learn more about Next.js, take a look at the following resources:
+- **Cクライアントからの出力の中継**
+  - Cクライアントの標準出力（JSONイベントやログ）をWebSocket接続中の全クライアントにブロードキャスト
+  - 標準エラー出力もWebSocket経由で通知
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **エラーハンドリング・再起動**
+  - CクライアントやWebSocketサーバーのエラーを検知し、必要に応じて再起動やエラーメッセージを送信
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 役割・特徴
 
-## Deploy on Vercel
+- **フロントエンドとCクライアントのプロセス間通信を抽象化**し、WebアプリからCロジックを安全かつリアルタイムに利用可能にします。
+- フロントエンドはWebSocketでコマンドを送信し、Cクライアントからのイベントや状態更新を受信します。
+- Cクライアントの生存監視や自動再起動により、堅牢な運用が可能です。
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+このミドルウェアにより、Next.jsフロントエンドとCクライアントの連携がシームレスに実現されています。
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## フロントエンドUIエントリーポイント（app/page.tsx）
+
+`client/src/othello-front/app/page.tsx`は、Othelloオンラインクライアントの**Next.jsフロントエンドのメイン画面**を構成するReactコンポーネントです。  
+ユーザーが実際に操作する画面のUIロジックが集約されています。
+
+### 主な機能・構成
+
+- **ゲーム状態管理**
+  - `useOthelloGame`カスタムフックを利用し、サーバーとの通信やゲーム進行の状態（部屋作成・参加・ターン管理・チャットなど）を一元管理
+  - 状態に応じてUIの有効/無効や表示内容を切り替え
+
+- **UIコンポーネントのレイアウト**
+  - 画面は3カラム構成（情報・コントロール／盤面／チャット）で、レスポンシブデザイン対応
+  - `GameInfo`：接続状態やルーム情報、ターン情報などを表示
+  - `ControlPanel`：部屋作成・参加・ゲーム開始・再戦・切断などの操作ボタン
+  - `Board`：Othelloの盤面表示と操作
+  - `ChatWindow`：ルーム内チャット機能
+
+- **状態に応じた表示切り替え**
+  - ゲームがアクティブな時のみ盤面を表示
+  - 接続待機中やロビー状態では案内メッセージを表示
+  - 操作不能な状態（通信中・相手ターン・ゲームオーバー等）では盤面操作を無効化
+
+- **サーバーとの連携**
+  - 各種操作（部屋作成・参加・コマ配置・チャット送信など）は、ミドルウェアサーバー経由でCクライアントにコマンドとして送信される
+
+### 備考
+
+- UIはTailwind CSSでスタイリングされており、ダークモードにも対応
+- 盤面・チャット・コントロールパネルなど、機能ごとにコンポーネント分割されているため、保守性・拡張性が高い設計です
+
+## ゲーム状態管理カスタムフック（hooks/useOthelloGame.ts）
+
+`client/src/othello-front/hooks/useOthelloGame.ts`は、Othelloオンラインクライアントの**フロントエンド状態管理の中核**となるReactカスタムフックです。  
+WebSocketを通じてミドルウェアサーバーと通信し、ゲーム進行・チャット・エラー管理などのロジックを一元化しています。
+
+### 主な機能・構成
+
+- **WebSocket通信の管理**
+  - ミドルウェアサーバー（Node.js）とWebSocketで接続し、Cクライアントの状態やイベントをリアルタイムに受信
+  - サーバーからの各種イベント（stateChange, boardUpdate, chatMessage, errorなど）を受け取り、Reactの状態として管理
+
+- **ゲーム状態の一元管理**
+  - ルームID、自分の色、盤面、ターン情報、チャット履歴、エラーメッセージなどを`gameState`として保持
+  - 状態変化に応じてUIを自動的に更新
+
+- **ゲーム操作用関数の提供**
+  - `createRoom`, `joinRoom`, `startGame`, `placePiece`, `sendRematchResponse`, `sendChatMessage`, `quitGame`, `connectToServer`など、UIから呼び出せる操作関数を提供
+  - これらの関数はWebSocket経由でコマンドをミドルウェアに送信し、Cクライアントに反映
+
+- **エラー・再接続処理**
+  - 通信エラーや切断時の状態リセット、必要に応じた再接続ロジックも実装
+
+### 備考
+
+- このフックを使うことで、UIコンポーネントはゲームの状態や操作関数を簡単に利用でき、状態管理や通信処理を意識せずに実装できます。
+- チャットや盤面、ターン管理など、Othelloの全機能に対応した拡張性の高い設計です。
