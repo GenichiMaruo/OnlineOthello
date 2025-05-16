@@ -6,6 +6,10 @@
 
 - [OnlineOthello クライアント・フロントエンド](./src/othello-front/README.md)
 
+サーバーアプリケーションの詳細については、以下のリンクを参照してください。
+
+- [OnlineOthello サーバーアプリケーション](../server/README.md)
+
 ## クライアントアプリケーション（client_app）
 
 `client/src/client_app.c`は、C言語で実装されたOnlineOthelloのクライアントアプリケーションです。  

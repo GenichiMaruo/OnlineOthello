@@ -6,6 +6,10 @@
 
 - [OnlineOthello クライアント・バックエンド](../../README.md)
 
+サーバーアプリケーションの詳細については、以下のリンクを参照してください。
+
+- [OnlineOthello サーバーアプリケーション](../../../server/README.md)
+
 ## ミドルウェアサーバー（middleware/server.ts）
 
 `client/src/othello-front/middleware/server.ts`は、Next.jsフロントエンドとC言語クライアントアプリケーションの間を仲介する**ミドルウェアサーバー**です。  
